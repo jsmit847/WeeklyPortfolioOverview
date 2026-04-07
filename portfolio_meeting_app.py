@@ -40,154 +40,183 @@ def apply_app_css() -> None:
         """
         <style>
             .block-container {
-                padding-top: 0.9rem;
-                padding-bottom: 2rem;
-                max-width: 1480px;
+                padding-top: 0.45rem;
+                padding-bottom: 1.15rem;
+                max-width: 1500px;
             }
             [data-testid="stSidebar"] {
                 border-right: 1px solid rgba(15,23,42,0.08);
             }
+            .app-header {
+                font-size: 1.35rem;
+                font-weight: 800;
+                color: rgb(15,23,42);
+                margin-bottom: 0.1rem;
+                line-height: 1.1;
+            }
+            .app-subheader {
+                font-size: 0.88rem;
+                color: rgba(15,23,42,0.68);
+                margin-bottom: 0.55rem;
+            }
             .hero-wrap {
                 border: 1px solid rgba(15,23,42,0.08);
-                border-radius: 26px;
-                padding: 1.2rem 1.35rem 1.15rem 1.35rem;
+                border-radius: 22px;
+                padding: 0.78rem 1rem 0.74rem 1rem;
                 background:
-                    radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 30%),
-                    linear-gradient(135deg, rgba(248,250,252,1), rgba(241,245,249,0.9));
-                margin-bottom: 0.9rem;
+                    radial-gradient(circle at top right, rgba(59,130,246,0.08), transparent 28%),
+                    linear-gradient(135deg, rgba(248,250,252,1), rgba(241,245,249,0.92));
+                margin-bottom: 0.55rem;
             }
             .hero-kicker {
                 display: inline-block;
-                padding: 0.28rem 0.66rem;
+                padding: 0.2rem 0.52rem;
                 border-radius: 999px;
                 background: rgba(15,23,42,0.08);
-                font-size: 0.76rem;
+                font-size: 0.69rem;
                 font-weight: 800;
                 letter-spacing: 0.04em;
                 text-transform: uppercase;
-                margin-bottom: 0.65rem;
+                margin-bottom: 0.38rem;
             }
             .hero-title {
-                font-size: 2.05rem;
+                font-size: 1.34rem;
                 line-height: 1.08;
                 font-weight: 800;
                 color: rgb(15,23,42);
-                margin-bottom: 0.3rem;
+                margin-bottom: 0.2rem;
             }
             .hero-subtitle {
-                color: rgba(15,23,42,0.72);
-                font-size: 1rem;
-                margin-bottom: 0.65rem;
+                color: rgba(15,23,42,0.7);
+                font-size: 0.88rem;
+                margin-bottom: 0.45rem;
             }
             .hero-chip {
                 display: inline-block;
-                margin: 0.15rem 0.35rem 0 0;
-                padding: 0.35rem 0.62rem;
+                margin: 0.1rem 0.28rem 0 0;
+                padding: 0.24rem 0.5rem;
                 border-radius: 999px;
-                background: rgba(255,255,255,0.85);
+                background: rgba(255,255,255,0.88);
                 border: 1px solid rgba(15,23,42,0.06);
-                font-size: 0.83rem;
+                font-size: 0.75rem;
                 font-weight: 700;
             }
             div[data-testid="stMetric"] {
                 background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
                 border: 1px solid rgba(15,23,42,0.08);
                 border-radius: 18px;
-                padding: 0.8rem 0.95rem;
+                padding: 0.55rem 0.72rem;
+            }
+            [data-testid="stMetricLabel"] {
+                font-size: 0.8rem;
+            }
+            [data-testid="stMetricValue"] {
+                font-size: 1.45rem;
+                line-height: 1.05;
+            }
+            [data-testid="stMetricDelta"] {
+                font-size: 0.82rem;
             }
             .panel-card {
                 border: 1px solid rgba(15,23,42,0.08);
-                border-radius: 22px;
-                padding: 1rem 1rem 0.9rem 1rem;
-                background: rgba(255,255,255,0.84);
+                border-radius: 20px;
+                padding: 0.82rem 0.88rem 0.78rem 0.88rem;
+                background: rgba(255,255,255,0.9);
                 height: 100%;
             }
             .panel-title {
-                font-size: 1rem;
+                font-size: 0.95rem;
                 font-weight: 800;
                 color: rgb(15,23,42);
-                margin-bottom: 0.75rem;
+                margin-bottom: 0.55rem;
             }
             .subpanel-title {
-                font-size: 0.84rem;
+                font-size: 0.72rem;
                 font-weight: 800;
                 text-transform: uppercase;
-                letter-spacing: 0.04em;
-                color: rgba(15,23,42,0.58);
-                margin: 0.95rem 0 0.5rem 0;
+                letter-spacing: 0.05em;
+                color: rgba(15,23,42,0.56);
+                margin: 0.72rem 0 0.35rem 0;
             }
             .info-grid {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 0.72rem;
+                gap: 0.52rem;
             }
             .info-item {
                 border: 1px solid rgba(15,23,42,0.07);
-                border-radius: 16px;
-                padding: 0.75rem 0.8rem;
-                background: rgba(248,250,252,0.72);
+                border-radius: 14px;
+                padding: 0.56rem 0.62rem;
+                background: rgba(248,250,252,0.74);
             }
             .info-label {
-                font-size: 0.72rem;
+                font-size: 0.67rem;
                 font-weight: 800;
                 letter-spacing: 0.05em;
                 text-transform: uppercase;
                 color: rgba(15,23,42,0.55);
-                margin-bottom: 0.28rem;
+                margin-bottom: 0.22rem;
             }
             .info-value {
-                font-size: 0.96rem;
+                font-size: 0.87rem;
                 font-weight: 700;
-                line-height: 1.28;
+                line-height: 1.18;
                 color: rgba(15,23,42,0.97);
                 word-break: break-word;
             }
             .date-strip {
                 display: grid;
                 grid-template-columns: repeat(3, minmax(0, 1fr));
-                gap: 0.72rem;
-                margin-top: 0.2rem;
+                gap: 0.52rem;
+                margin-top: 0.15rem;
             }
             .date-card {
                 border: 1px solid rgba(15,23,42,0.08);
-                border-radius: 18px;
-                padding: 0.82rem 0.9rem;
+                border-radius: 16px;
+                padding: 0.58rem 0.66rem;
                 background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
             }
             .date-label {
-                font-size: 0.73rem;
+                font-size: 0.67rem;
                 font-weight: 800;
                 letter-spacing: 0.05em;
                 text-transform: uppercase;
                 color: rgba(15,23,42,0.55);
-                margin-bottom: 0.25rem;
+                margin-bottom: 0.2rem;
             }
             .date-value {
-                font-size: 1.02rem;
+                font-size: 0.88rem;
                 font-weight: 800;
                 color: rgb(15,23,42);
-                margin-bottom: 0.15rem;
+                margin-bottom: 0.1rem;
             }
             .date-subvalue {
-                font-size: 0.85rem;
+                font-size: 0.76rem;
                 color: rgba(15,23,42,0.7);
             }
             .signal-list {
                 margin: 0;
-                padding-left: 1.1rem;
+                padding-left: 1rem;
             }
             .signal-list li {
-                margin-bottom: 0.45rem;
+                margin-bottom: 0.32rem;
+                font-size: 0.87rem;
             }
             .small-muted {
                 color: rgba(15,23,42,0.72);
-                font-size: 0.86rem;
+                font-size: 0.82rem;
             }
             .agenda-caption {
                 color: rgba(15,23,42,0.72);
-                font-size: 0.86rem;
-                margin-top: -0.25rem;
-                margin-bottom: 0.6rem;
+                font-size: 0.84rem;
+                margin-top: -0.15rem;
+                margin-bottom: 0.5rem;
+            }
+            .compact-progress {
+                font-size: 0.83rem;
+                font-weight: 700;
+                color: rgba(15,23,42,0.72);
+                margin: 0.15rem 0 0.45rem 0;
             }
         </style>
         """,
@@ -546,24 +575,24 @@ def build_presenter_prompts(row: pd.Series) -> List[str]:
     days_past_due = row.get("days_past_due")
 
     if maturity_date != "-":
-        prompts.append(f"Maturity date: {maturity_date} ({fmt_day_delta(days_to_maturity)}).")
+        prompts.append(f"Maturity: {maturity_date} ({fmt_day_delta(days_to_maturity)}).")
     if next_payment_date != "-":
-        prompts.append(f"Next payment date: {next_payment_date} ({fmt_day_delta(days_to_next_payment)}).")
+        prompts.append(f"Next payment: {next_payment_date} ({fmt_day_delta(days_to_next_payment)}).")
     if pd.notna(days_past_due) and float(days_past_due) > 0:
-        prompts.append(f"Days past due currently sits at {fmt_int(days_past_due)}.")
+        prompts.append(f"DPD currently at {fmt_int(days_past_due)}.")
 
     status_text = display_text(row.get("status"), blank="")
     if status_text:
-        prompts.append(f"Current status on file: {status_text}.")
+        prompts.append(f"Confirm whether status should stay as: {status_text}.")
 
     commentary_text = display_text(row.get("commentary"), blank="")
-    if commentary_text and commentary_text != "-":
-        prompts.append("Confirm whether existing AM commentary still reflects the latest story.")
+    if commentary_text:
+        prompts.append("Decide whether AM commentary needs a live refresh.")
 
     if not prompts:
-        prompts.append("Use this slide to confirm the latest business story, upcoming milestone, and next action.")
+        prompts.append("Confirm the latest story, next milestone, and any follow-up owner.")
 
-    return prompts
+    return prompts[:3]
 
 
 def render_info_grid(items: List[Tuple[str, object]]) -> None:
@@ -770,7 +799,7 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
         st.session_state.deck_index = 0
     st.session_state.deck_index = int(np.clip(st.session_state.deck_index, 0, len(deck) - 1))
 
-    nav1, nav2, nav3 = st.columns([1, 1, 3])
+    nav1, nav2, nav3 = st.columns([0.9, 0.9, 3.2])
     with nav1:
         if st.button("⬅ Previous", use_container_width=True, disabled=st.session_state.deck_index == 0):
             st.session_state.deck_index -= 1
@@ -780,7 +809,7 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
     with nav3:
         jump_options = list(range(len(deck)))
         current_index = st.selectbox(
-            "Jump to deal",
+            "Agenda jump",
             options=jump_options,
             index=st.session_state.deck_index,
             format_func=lambda i: f"{i + 1}. {deck.iloc[i]['sheet']} | {deck.iloc[i]['deal_name']}",
@@ -788,8 +817,10 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
         st.session_state.deck_index = current_index
 
     row = deck.iloc[st.session_state.deck_index]
-    progress = (st.session_state.deck_index + 1) / len(deck)
-    st.progress(progress, text=f"Agenda item {st.session_state.deck_index + 1} of {len(deck)}")
+    st.markdown(
+        f"<div class='compact-progress'>Agenda item {st.session_state.deck_index + 1} of {len(deck)} • Original workbook order preserved</div>",
+        unsafe_allow_html=True,
+    )
 
     hero_html = f"""
         <div class='hero-wrap'>
@@ -806,17 +837,16 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
     """
     st.markdown(hero_html, unsafe_allow_html=True)
 
-    metric_cols = st.columns(5)
+    metric_cols = st.columns(4)
     metric_cols[0].metric("UPB", fmt_money(row.get("upb"), decimals=0))
     metric_cols[1].metric("Maturity", fmt_date(row.get("maturity_date")), fmt_day_delta(row.get("days_to_maturity")))
     metric_cols[2].metric("Next Payment", fmt_date(row.get("next_payment_date")), fmt_day_delta(row.get("days_to_next_payment")))
-    metric_cols[3].metric("Days Past Due", fmt_int(row.get("days_past_due")))
-    metric_cols[4].metric("Status", display_text(row.get("status")))
+    metric_cols[3].metric("Status", display_text(row.get("status")))
 
-    left, right = st.columns([1.12, 0.88])
+    left, right = st.columns([1.18, 0.92], gap="large")
 
     with left:
-        st.markdown("<div class='panel-card'><div class='panel-title'>Deal snapshot</div>", unsafe_allow_html=True)
+        st.markdown("<div class='panel-card'><div class='panel-title'>Key deal view</div>", unsafe_allow_html=True)
         render_info_grid(
             [
                 ("Borrower", row.get("borrower")),
@@ -830,7 +860,7 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
             ]
         )
 
-        st.markdown("<div class='subpanel-title'>Capital profile</div>", unsafe_allow_html=True)
+        st.markdown("<div class='subpanel-title'>Capital details</div>", unsafe_allow_html=True)
         if row.get("sheet") == "Bridge":
             render_info_grid(
                 [
@@ -845,48 +875,51 @@ def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -
                 [
                     ("UPB", fmt_money(row.get("upb"), decimals=0)),
                     ("Loan Amount", fmt_money(row.get("loan_amount"), decimals=0)),
-                    ("Status", row.get("status")),
                     ("Owner / Point Person", row.get("owner")),
+                    ("Deal #", row.get("deal_number")),
                 ]
             )
 
-        st.markdown("<div class='subpanel-title'>Important dates</div>", unsafe_allow_html=True)
+        st.markdown("<div class='subpanel-title'>Dates and delinquency</div>", unsafe_allow_html=True)
         render_date_strip(row)
         st.markdown("</div>", unsafe_allow_html=True)
 
     with right:
-        st.markdown("<div class='panel-card'><div class='panel-title'>Meeting console</div>", unsafe_allow_html=True)
+        st.markdown("<div class='panel-card'><div class='panel-title'>Meeting notes</div>", unsafe_allow_html=True)
         prompts = build_presenter_prompts(row)
         prompt_html = "".join(f"<li>{html.escape(prompt)}</li>" for prompt in prompts)
         st.markdown(
             f"""
-            <div class='small-muted' style='margin-bottom:0.55rem;'>Use this panel during the meeting to keep the narrative crisp and update the workbook-ready fields live.</div>
-            <div class='subpanel-title'>Presenter prompts</div>
+            <div class='small-muted' style='margin-bottom:0.45rem;'>Compact notes panel for live updates during the meeting.</div>
             <ul class='signal-list'>{prompt_html}</ul>
             """,
             unsafe_allow_html=True,
         )
 
-        if status_suggestions:
-            st.caption("Quick status ideas: " + " | ".join(status_suggestions[:8]))
-
-        status_value = st.text_input(
-            "Status",
-            value=str(row.get("status", "")),
-            key=f"status_input::{row['sheet']}::{row['deal_number']}",
-        )
+        input_left, input_right = st.columns(2)
+        with input_left:
+            status_value = st.text_input(
+                "Status",
+                value=str(row.get("status", "")),
+                key=f"status_input::{row['sheet']}::{row['deal_number']}",
+            )
         owner_label = "Point Person" if row.get("sheet") == "Bridge" else "Asset Manager"
-        owner_value = st.text_input(
-            owner_label,
-            value=str(row.get("owner", "")),
-            key=f"owner_input::{row['sheet']}::{row['deal_number']}",
-        )
+        with input_right:
+            owner_value = st.text_input(
+                owner_label,
+                value=str(row.get("owner", "")),
+                key=f"owner_input::{row['sheet']}::{row['deal_number']}",
+            )
+
         commentary_value = st.text_area(
             "AM Commentary / live notes",
             value=str(row.get("commentary", "")),
-            height=230,
+            height=165,
             key=f"commentary_input::{row['sheet']}::{row['deal_number']}",
         )
+
+        with st.expander("Quick status ideas"):
+            st.write(" | ".join(status_suggestions[:12]) if status_suggestions else "No saved status ideas yet.")
 
         if st.button("Save this update", use_container_width=True, type="primary"):
             overrides = ensure_override_store()
@@ -956,8 +989,13 @@ def main() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     apply_app_css()
 
-    st.title(APP_TITLE)
-    st.caption("A cleaner meeting deck that preserves original workbook order: Bridge first, then Term.")
+    st.markdown(
+        """
+        <div class='app-header'>Weekly Portfolio Meeting Deck</div>
+        <div class='app-subheader'>Compact presentation view built for screen share. Original workbook order stays intact: Bridge first, then Term.</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     file_bytes, workbook_name = sidebar_file_picker()
     if file_bytes is None:
