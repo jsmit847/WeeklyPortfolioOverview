@@ -40,183 +40,158 @@ def apply_app_css() -> None:
         """
         <style>
             .block-container {
+                max-width: 1520px;
                 padding-top: 0.45rem;
-                padding-bottom: 1.15rem;
-                max-width: 1500px;
+                padding-bottom: 1rem;
             }
-            [data-testid="stSidebar"] {
-                border-right: 1px solid rgba(15,23,42,0.08);
+            .topline {
+                display: flex;
+                align-items: baseline;
+                gap: 0.7rem;
+                margin-bottom: 0.15rem;
             }
-            .app-header {
-                font-size: 1.35rem;
+            .topline-title {
+                font-size: 1.15rem;
                 font-weight: 800;
                 color: rgb(15,23,42);
-                margin-bottom: 0.1rem;
+                line-height: 1.05;
+            }
+            .topline-subtitle {
+                font-size: 0.82rem;
+                color: rgba(15,23,42,0.66);
                 line-height: 1.1;
             }
-            .app-subheader {
-                font-size: 0.88rem;
-                color: rgba(15,23,42,0.68);
-                margin-bottom: 0.55rem;
+            .toolbar-card {
+                border: 1px solid rgba(15,23,42,0.08);
+                border-radius: 18px;
+                padding: 0.6rem 0.8rem;
+                background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(248,250,252,0.95));
+                margin-bottom: 0.6rem;
             }
-            .hero-wrap {
+            .hero-card {
                 border: 1px solid rgba(15,23,42,0.08);
                 border-radius: 22px;
-                padding: 0.78rem 1rem 0.74rem 1rem;
+                padding: 0.78rem 0.95rem;
                 background:
-                    radial-gradient(circle at top right, rgba(59,130,246,0.08), transparent 28%),
-                    linear-gradient(135deg, rgba(248,250,252,1), rgba(241,245,249,0.92));
+                    radial-gradient(circle at top right, rgba(14,165,233,0.10), transparent 30%),
+                    linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
                 margin-bottom: 0.55rem;
             }
             .hero-kicker {
                 display: inline-block;
-                padding: 0.2rem 0.52rem;
                 border-radius: 999px;
                 background: rgba(15,23,42,0.08);
-                font-size: 0.69rem;
+                padding: 0.18rem 0.52rem;
+                font-size: 0.68rem;
                 font-weight: 800;
                 letter-spacing: 0.04em;
                 text-transform: uppercase;
-                margin-bottom: 0.38rem;
+                margin-bottom: 0.35rem;
             }
             .hero-title {
-                font-size: 1.34rem;
-                line-height: 1.08;
+                font-size: 1.28rem;
+                line-height: 1.1;
                 font-weight: 800;
+                margin-bottom: 0.18rem;
                 color: rgb(15,23,42);
-                margin-bottom: 0.2rem;
             }
             .hero-subtitle {
+                font-size: 0.84rem;
                 color: rgba(15,23,42,0.7);
-                font-size: 0.88rem;
-                margin-bottom: 0.45rem;
+                margin-bottom: 0.35rem;
             }
-            .hero-chip {
+            .chip {
                 display: inline-block;
-                margin: 0.1rem 0.28rem 0 0;
-                padding: 0.24rem 0.5rem;
+                margin: 0.1rem 0.25rem 0 0;
                 border-radius: 999px;
-                background: rgba(255,255,255,0.88);
                 border: 1px solid rgba(15,23,42,0.06);
-                font-size: 0.75rem;
+                background: rgba(255,255,255,0.92);
+                padding: 0.22rem 0.48rem;
+                font-size: 0.74rem;
                 font-weight: 700;
             }
             div[data-testid="stMetric"] {
-                background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
                 border: 1px solid rgba(15,23,42,0.08);
                 border-radius: 18px;
-                padding: 0.55rem 0.72rem;
+                background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
+                padding: 0.52rem 0.68rem;
             }
             [data-testid="stMetricLabel"] {
-                font-size: 0.8rem;
+                font-size: 0.76rem;
             }
             [data-testid="stMetricValue"] {
-                font-size: 1.45rem;
-                line-height: 1.05;
+                font-size: 1.26rem;
+                line-height: 1.02;
             }
             [data-testid="stMetricDelta"] {
-                font-size: 0.82rem;
+                font-size: 0.78rem;
             }
             .panel-card {
                 border: 1px solid rgba(15,23,42,0.08);
                 border-radius: 20px;
-                padding: 0.82rem 0.88rem 0.78rem 0.88rem;
-                background: rgba(255,255,255,0.9);
+                padding: 0.82rem 0.9rem;
+                background: rgba(255,255,255,0.92);
                 height: 100%;
             }
             .panel-title {
-                font-size: 0.95rem;
+                font-size: 0.93rem;
                 font-weight: 800;
                 color: rgb(15,23,42);
                 margin-bottom: 0.55rem;
             }
-            .subpanel-title {
-                font-size: 0.72rem;
-                font-weight: 800;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: rgba(15,23,42,0.56);
-                margin: 0.72rem 0 0.35rem 0;
-            }
-            .info-grid {
+            .field-grid {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 0.52rem;
+                gap: 0.5rem;
             }
-            .info-item {
+            .field-card {
                 border: 1px solid rgba(15,23,42,0.07);
                 border-radius: 14px;
-                padding: 0.56rem 0.62rem;
-                background: rgba(248,250,252,0.74);
+                background: rgba(248,250,252,0.8);
+                padding: 0.55rem 0.62rem;
             }
-            .info-label {
+            .field-label {
                 font-size: 0.67rem;
                 font-weight: 800;
-                letter-spacing: 0.05em;
+                letter-spacing: 0.04em;
                 text-transform: uppercase;
-                color: rgba(15,23,42,0.55);
-                margin-bottom: 0.22rem;
+                color: rgba(15,23,42,0.56);
+                margin-bottom: 0.18rem;
             }
-            .info-value {
-                font-size: 0.87rem;
+            .field-value {
+                font-size: 0.86rem;
                 font-weight: 700;
+                color: rgba(15,23,42,0.95);
                 line-height: 1.18;
-                color: rgba(15,23,42,0.97);
                 word-break: break-word;
             }
-            .date-strip {
-                display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-                gap: 0.52rem;
-                margin-top: 0.15rem;
-            }
-            .date-card {
-                border: 1px solid rgba(15,23,42,0.08);
-                border-radius: 16px;
-                padding: 0.58rem 0.66rem;
-                background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
-            }
-            .date-label {
-                font-size: 0.67rem;
-                font-weight: 800;
-                letter-spacing: 0.05em;
-                text-transform: uppercase;
-                color: rgba(15,23,42,0.55);
-                margin-bottom: 0.2rem;
-            }
-            .date-value {
-                font-size: 0.88rem;
-                font-weight: 800;
-                color: rgb(15,23,42);
-                margin-bottom: 0.1rem;
-            }
-            .date-subvalue {
-                font-size: 0.76rem;
-                color: rgba(15,23,42,0.7);
-            }
-            .signal-list {
-                margin: 0;
-                padding-left: 1rem;
-            }
-            .signal-list li {
-                margin-bottom: 0.32rem;
-                font-size: 0.87rem;
+            .notes-box {
+                min-height: 145px;
+                border: 1px solid rgba(15,23,42,0.07);
+                border-radius: 14px;
+                background: rgba(248,250,252,0.8);
+                padding: 0.65rem 0.7rem;
+                font-size: 0.9rem;
+                line-height: 1.32;
+                color: rgba(15,23,42,0.92);
             }
             .small-muted {
-                color: rgba(15,23,42,0.72);
-                font-size: 0.82rem;
+                font-size: 0.8rem;
+                color: rgba(15,23,42,0.66);
             }
-            .agenda-caption {
-                color: rgba(15,23,42,0.72);
-                font-size: 0.84rem;
-                margin-top: -0.15rem;
-                margin-bottom: 0.5rem;
-            }
-            .compact-progress {
-                font-size: 0.83rem;
+            .mini-chip {
+                display: inline-block;
+                margin-right: 0.3rem;
+                border-radius: 999px;
+                background: rgba(15,23,42,0.07);
+                padding: 0.18rem 0.5rem;
+                font-size: 0.72rem;
                 font-weight: 700;
-                color: rgba(15,23,42,0.72);
-                margin: 0.15rem 0 0.45rem 0;
+            }
+            .agenda-note {
+                font-size: 0.8rem;
+                color: rgba(15,23,42,0.67);
+                margin-bottom: 0.35rem;
             }
         </style>
         """,
@@ -243,62 +218,15 @@ def display_text(value: object, blank: str = "-") -> str:
     return text if text else blank
 
 
-def find_header_row(ws, search_rows: int = 30, key_header: str = "Deal Number") -> Tuple[int, int]:
-    max_row = min(search_rows, ws.max_row)
-    for r in range(1, max_row + 1):
-        vals = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
-        if any(canon_header(v) == canon_header(key_header) for v in vals if v is not None):
-            return r, ws.max_column
-    raise ValueError(f"Could not find header row in sheet {ws.title!r}.")
+def get_override_key(sheet: str, deal_number: str) -> str:
+    return f"{sheet}::{deal_number}"
 
 
-def latest_dated_by_suffix(headers: Iterable[object]) -> Dict[str, str]:
-    best: Dict[str, Tuple[Tuple[int, int], str]] = {}
-    for header in headers:
-        if header is None:
-            continue
-        text = norm_text(header)
-        match = DATE_HDR.match(text)
-        if not match:
-            continue
-        month_day = (int(match.group(1)), int(match.group(2)))
-        suffix = canon_header(match.group(3))
-        if suffix not in best or month_day > best[suffix][0]:
-            best[suffix] = (month_day, text)
-    return {suffix: full for suffix, (_md, full) in best.items()}
-
-
-def resolve_column(columns: Iterable[object], *candidates: Optional[str]) -> Optional[str]:
-    cols = [str(c) for c in columns if c is not None]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        for col in cols:
-            if canon_header(col) == canon_header(candidate):
-                return col
+def first_existing_file(paths: Iterable[Path]) -> Optional[Path]:
+    for path in paths:
+        if path.exists():
+            return path
     return None
-
-
-def matching_columns(columns: Iterable[object], candidate: str) -> List[str]:
-    return [str(c) for c in columns if c is not None and canon_header(c) == canon_header(candidate)]
-
-
-def safe_series(df: pd.DataFrame, column_name: Optional[str], default: object = "") -> pd.Series:
-    if column_name and column_name in df.columns:
-        return df[column_name]
-    return pd.Series([default] * len(df), index=df.index)
-
-
-def safe_numeric_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Series:
-    if column_name and column_name in df.columns:
-        return pd.to_numeric(df[column_name], errors="coerce")
-    return pd.Series([np.nan] * len(df), index=df.index, dtype=float)
-
-
-def safe_datetime_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Series:
-    if column_name and column_name in df.columns:
-        return pd.to_datetime(df[column_name], errors="coerce")
-    return pd.Series([pd.NaT] * len(df), index=df.index)
 
 
 def fmt_money(value: object, decimals: int = 0, blank: str = "-") -> str:
@@ -350,11 +278,62 @@ def fmt_day_delta(days: object, blank: str = "-") -> str:
     return f"{abs(days_i):,}d overdue"
 
 
-def first_existing_file(paths: Iterable[Path]) -> Optional[Path]:
-    for path in paths:
-        if path.exists():
-            return path
+def safe_series(df: pd.DataFrame, column_name: Optional[str], default: object = "") -> pd.Series:
+    if column_name and column_name in df.columns:
+        return df[column_name]
+    return pd.Series([default] * len(df), index=df.index)
+
+
+def safe_numeric_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Series:
+    if column_name and column_name in df.columns:
+        return pd.to_numeric(df[column_name], errors="coerce")
+    return pd.Series([np.nan] * len(df), index=df.index, dtype=float)
+
+
+def safe_datetime_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Series:
+    if column_name and column_name in df.columns:
+        return pd.to_datetime(df[column_name], errors="coerce")
+    return pd.Series([pd.NaT] * len(df), index=df.index)
+
+
+def resolve_column(columns: Iterable[object], *candidates: Optional[str]) -> Optional[str]:
+    cols = [str(c) for c in columns if c is not None]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        for col in cols:
+            if canon_header(col) == canon_header(candidate):
+                return col
     return None
+
+
+def matching_columns(columns: Iterable[object], candidate: str) -> List[str]:
+    return [str(c) for c in columns if c is not None and canon_header(c) == canon_header(candidate)]
+
+
+def find_header_row(ws, search_rows: int = 30, key_header: str = "Deal Number") -> Tuple[int, int]:
+    max_row = min(search_rows, ws.max_row)
+    for r in range(1, max_row + 1):
+        values = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
+        if any(canon_header(v) == canon_header(key_header) for v in values if v is not None):
+            return r, ws.max_column
+    raise ValueError(f"Could not find header row in sheet {ws.title!r}.")
+
+
+def latest_dated_by_suffix(headers: Iterable[object]) -> Dict[str, str]:
+    best: Dict[str, Tuple[Tuple[int, int], str]] = {}
+    for header in headers:
+        if header is None:
+            continue
+        text = norm_text(header)
+        match = DATE_HDR.match(text)
+        if not match:
+            continue
+        month_day = (int(match.group(1)), int(match.group(2)))
+        suffix = canon_header(match.group(3))
+        if suffix not in best or month_day > best[suffix][0]:
+            best[suffix] = (month_day, text)
+    return {suffix: full for suffix, (_month_day, full) in best.items()}
 
 
 def fallback_name(primary: pd.Series, secondary: pd.Series, tertiary: pd.Series, final_fallback: pd.Series) -> pd.Series:
@@ -461,6 +440,7 @@ def load_portfolio_workbook(
         df["status"] = safe_series(df, status_col, "").map(norm_text)
         df["commentary"] = safe_series(df, commentary_col, "").map(norm_text)
         df["saved_at"] = ""
+        df["deal_key"] = df.apply(lambda row: get_override_key(str(row["sheet"]), str(row["deal_number"])), axis=1)
 
         df["upb"] = safe_numeric_series(df, upb_col)
         df["maturity_date"] = safe_datetime_series(df, maturity_col)
@@ -518,14 +498,66 @@ def available_status_suggestions(deck: pd.DataFrame) -> List[str]:
     return sorted(set(COMMON_STATUS_SUGGESTIONS + existing))
 
 
-def get_override_key(sheet: str, deal_number: str) -> str:
-    return f"{sheet}::{deal_number}"
+def initialize_state() -> None:
+    defaults = {
+        "view_mode": "Presentation",
+        "sheet_filter": "All",
+        "search_query": "",
+        "include_hidden": False,
+        "pending_only": False,
+        "as_of_date": dt.date.today(),
+        "selected_deal_key": None,
+        "meeting_overrides": {},
+        "review_flags": {},
+        "dialog_target": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 def ensure_override_store() -> Dict[str, Dict[str, str]]:
     if "meeting_overrides" not in st.session_state:
         st.session_state.meeting_overrides = {}
     return st.session_state.meeting_overrides
+
+
+def ensure_review_flags() -> Dict[str, bool]:
+    if "review_flags" not in st.session_state:
+        st.session_state.review_flags = {}
+    return st.session_state.review_flags
+
+
+def upsert_override(
+    base_row: pd.Series,
+    status: str,
+    owner: str,
+    commentary: str,
+) -> None:
+    overrides = ensure_override_store()
+    key = get_override_key(str(base_row.get("sheet")), str(base_row.get("deal_number")))
+
+    payload = {
+        "sheet": str(base_row.get("sheet")),
+        "deal_number": str(base_row.get("deal_number")),
+        "status": norm_text(status),
+        "owner": norm_text(owner),
+        "commentary": commentary.strip(),
+        "saved_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    original_status = norm_text(base_row.get("status"))
+    original_owner = norm_text(base_row.get("owner"))
+    original_commentary = str(base_row.get("commentary") or "")
+
+    if (
+        payload["status"] == original_status
+        and payload["owner"] == original_owner
+        and payload["commentary"] == original_commentary
+    ):
+        overrides.pop(key, None)
+    else:
+        overrides[key] = payload
 
 
 def apply_overrides(deck: pd.DataFrame, overrides: Dict[str, Dict[str, str]]) -> pd.DataFrame:
@@ -565,129 +597,230 @@ def apply_overrides(deck: pd.DataFrame, overrides: Dict[str, Dict[str, str]]) ->
     return merged.drop(columns=drop_cols)
 
 
+def apply_filters(deck: pd.DataFrame) -> pd.DataFrame:
+    filtered = deck.copy()
+
+    if st.session_state.sheet_filter == "Bridge":
+        filtered = filtered[filtered["sheet"] == "Bridge"].copy()
+    elif st.session_state.sheet_filter == "Term":
+        filtered = filtered[filtered["sheet"] == "Term"].copy()
+
+    query = st.session_state.search_query.strip().upper()
+    if query:
+        filtered = filtered[
+            filtered["deal_number"].astype(str).str.upper().str.contains(query, na=False)
+            | filtered["deal_name"].astype(str).str.upper().str.contains(query, na=False)
+            | filtered["borrower"].astype(str).str.upper().str.contains(query, na=False)
+        ].copy()
+
+    if st.session_state.pending_only:
+        flags = ensure_review_flags()
+        filtered = filtered[~filtered["deal_key"].map(lambda key: bool(flags.get(key, False)))].copy()
+
+    return filtered.sort_values(["sheet_order", "original_order"], ascending=[True, True], kind="stable").reset_index(drop=True)
+
+
+def sync_selected_deal(deck: pd.DataFrame) -> None:
+    if deck.empty:
+        st.session_state.selected_deal_key = None
+        return
+    valid_keys = deck["deal_key"].tolist()
+    if st.session_state.selected_deal_key not in valid_keys:
+        st.session_state.selected_deal_key = valid_keys[0]
+
+
+def get_selected_row(deck: pd.DataFrame) -> pd.Series:
+    sync_selected_deal(deck)
+    selected_key = st.session_state.selected_deal_key
+    match = deck[deck["deal_key"] == selected_key]
+    if match.empty:
+        return deck.iloc[0]
+    return match.iloc[0]
+
+
+def get_row_by_key(deck: pd.DataFrame, deal_key: str) -> Optional[pd.Series]:
+    match = deck[deck["deal_key"] == deal_key]
+    if match.empty:
+        return None
+    return match.iloc[0]
+
+
+def move_selection(deck: pd.DataFrame, step: int) -> None:
+    sync_selected_deal(deck)
+    keys = deck["deal_key"].tolist()
+    current_key = st.session_state.selected_deal_key
+    idx = keys.index(current_key)
+    new_idx = min(max(idx + step, 0), len(keys) - 1)
+    st.session_state.selected_deal_key = keys[new_idx]
+
+
 def build_presenter_prompts(row: pd.Series) -> List[str]:
     prompts: List[str] = []
 
-    maturity_date = fmt_date(row.get("maturity_date"))
-    next_payment_date = fmt_date(row.get("next_payment_date"))
-    days_to_maturity = row.get("days_to_maturity")
-    days_to_next_payment = row.get("days_to_next_payment")
-    days_past_due = row.get("days_past_due")
-
-    if maturity_date != "-":
-        prompts.append(f"Maturity: {maturity_date} ({fmt_day_delta(days_to_maturity)}).")
-    if next_payment_date != "-":
-        prompts.append(f"Next payment: {next_payment_date} ({fmt_day_delta(days_to_next_payment)}).")
-    if pd.notna(days_past_due) and float(days_past_due) > 0:
-        prompts.append(f"DPD currently at {fmt_int(days_past_due)}.")
+    maturity_text = fmt_date(row.get("maturity_date"))
+    payment_text = fmt_date(row.get("next_payment_date"))
+    if maturity_text != "-":
+        prompts.append(f"Confirm maturity timing: {maturity_text} ({fmt_day_delta(row.get('days_to_maturity'))}).")
+    if payment_text != "-":
+        prompts.append(f"Confirm next payment timing: {payment_text} ({fmt_day_delta(row.get('days_to_next_payment'))}).")
 
     status_text = display_text(row.get("status"), blank="")
     if status_text:
-        prompts.append(f"Confirm whether status should stay as: {status_text}.")
+        prompts.append(f"Check whether status should stay as '{status_text}'.")
 
     commentary_text = display_text(row.get("commentary"), blank="")
     if commentary_text:
-        prompts.append("Decide whether AM commentary needs a live refresh.")
+        prompts.append("Decide whether AM commentary needs a live refresh before the meeting ends.")
 
     if not prompts:
         prompts.append("Confirm the latest story, next milestone, and any follow-up owner.")
 
-    return prompts[:3]
+    return prompts[:4]
 
 
-def render_info_grid(items: List[Tuple[str, object]]) -> None:
-    parts: List[str] = []
+def render_field_grid(items: List[Tuple[str, object]]) -> None:
+    cards = []
     for label, value in items:
-        parts.append(
-            "<div class='info-item'>"
-            f"<div class='info-label'>{html.escape(label)}</div>"
-            f"<div class='info-value'>{html.escape(display_text(value))}</div>"
+        cards.append(
+            "<div class='field-card'>"
+            f"<div class='field-label'>{html.escape(label)}</div>"
+            f"<div class='field-value'>{html.escape(display_text(value))}</div>"
             "</div>"
         )
-    st.markdown(f"<div class='info-grid'>{''.join(parts)}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='field-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
-def render_date_strip(row: pd.Series) -> None:
-    date_cards = [
-        ("Maturity Date", fmt_date(row.get("maturity_date")), fmt_day_delta(row.get("days_to_maturity"))),
-        ("Next Payment", fmt_date(row.get("next_payment_date")), fmt_day_delta(row.get("days_to_next_payment"))),
-        ("Days Past Due", fmt_int(row.get("days_past_due")), "Current delinquency snapshot"),
-    ]
-
-    html_parts = []
-    for label, value, subvalue in date_cards:
-        html_parts.append(
-            "<div class='date-card'>"
-            f"<div class='date-label'>{html.escape(label)}</div>"
-            f"<div class='date-value'>{html.escape(value)}</div>"
-            f"<div class='date-subvalue'>{html.escape(subvalue)}</div>"
-            "</div>"
-        )
-
-    st.markdown(f"<div class='date-strip'>{''.join(html_parts)}</div>", unsafe_allow_html=True)
-
-
-def build_queue_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
+def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     queue = deck.copy()
-    needed_defaults = {
-        "sheet": "",
-        "deal_number": "",
-        "deal_name": "",
-        "status": "",
-        "owner": "",
-        "commentary": "",
-        "upb": np.nan,
-        "maturity_date": pd.NaT,
-        "next_payment_date": pd.NaT,
-        "days_past_due": np.nan,
-        "saved_at": "",
-        "sheet_order": 99,
-        "original_order": 999999,
-    }
-    for col, default_value in needed_defaults.items():
-        if col not in queue.columns:
-            queue[col] = default_value
-
-    queue = queue.sort_values(["sheet_order", "original_order"], ascending=[True, True], kind="stable").reset_index(drop=True)
     queue.insert(0, "Agenda #", range(1, len(queue) + 1))
     queue["UPB"] = queue["upb"].map(lambda x: fmt_money(x, decimals=0))
     queue["Maturity"] = queue["maturity_date"].map(fmt_date)
     queue["Next Payment"] = queue["next_payment_date"].map(fmt_date)
-    queue["DPD"] = queue["days_past_due"].map(fmt_int)
-
+    queue["Status"] = queue["status"].map(display_text)
+    queue["Owner"] = queue["owner"].map(display_text)
     return queue[
         [
             "Agenda #",
             "sheet",
-            "deal_number",
             "deal_name",
-            "status",
-            "owner",
-            "UPB",
+            "deal_number",
+            "Status",
+            "Owner",
             "Maturity",
             "Next Payment",
-            "DPD",
-            "commentary",
-            "saved_at",
+            "UPB",
         ]
     ].rename(
         columns={
             "sheet": "Type",
-            "deal_number": "Deal #",
             "deal_name": "Deal Name",
+            "deal_number": "Deal #",
+        }
+    )
+
+
+def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
+    flags = ensure_review_flags()
+    review = deck.copy().set_index("deal_key")
+    review.insert(0, "Agenda #", range(1, len(review) + 1))
+    review["Type"] = review["sheet"]
+    review["Deal Name"] = review["deal_name"].map(display_text)
+    review["Deal #"] = review["deal_number"].map(display_text)
+    review["Maturity"] = review["maturity_date"].map(fmt_date)
+    review["Next Payment"] = review["next_payment_date"].map(fmt_date)
+    review["UPB"] = review["upb"].map(lambda x: fmt_money(x, decimals=0))
+    review["Reviewed"] = review.index.map(lambda key: bool(flags.get(key, False)))
+    review["Status"] = review["status"].fillna("").astype(str)
+    review["Owner"] = review["owner"].fillna("").astype(str)
+    review["AM Commentary"] = review["commentary"].fillna("").astype(str)
+    return review[
+        [
+            "Agenda #",
+            "Type",
+            "Deal Name",
+            "Deal #",
+            "Maturity",
+            "Next Payment",
+            "UPB",
+            "Reviewed",
+            "Status",
+            "Owner",
+            "AM Commentary",
+        ]
+    ]
+
+
+def apply_review_edits(edited_df: pd.DataFrame, current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+    current_lookup = current_deck.set_index("deal_key")
+    raw_lookup = raw_deck.set_index("deal_key")
+    flags = ensure_review_flags()
+
+    for deal_key, edited_row in edited_df.iterrows():
+        reviewed_value = bool(edited_row.get("Reviewed", False))
+        flags[deal_key] = reviewed_value
+
+        if deal_key not in current_lookup.index or deal_key not in raw_lookup.index:
+            continue
+
+        current_row = current_lookup.loc[deal_key]
+        raw_row = raw_lookup.loc[deal_key]
+
+        new_status = norm_text(edited_row.get("Status", ""))
+        new_owner = norm_text(edited_row.get("Owner", ""))
+        new_commentary = str(edited_row.get("AM Commentary", "") or "").strip()
+
+        if (
+            new_status != norm_text(current_row.get("status"))
+            or new_owner != norm_text(current_row.get("owner"))
+            or new_commentary != str(current_row.get("commentary") or "")
+        ):
+            upsert_override(raw_row, new_status, new_owner, new_commentary)
+
+
+def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.DataFrame:
+    flags = ensure_review_flags()
+    overrides = ensure_override_store()
+
+    reviewed_df = pd.DataFrame(
+        {
+            "Deal Key": list(flags.keys()),
+            "Reviewed": list(flags.values()),
+        }
+    )
+    reviewed_df = reviewed_df[reviewed_df["Reviewed"] == True]  # noqa: E712
+
+    if reviewed_df.empty and not overrides:
+        return pd.DataFrame()
+
+    out = deck[["deal_key", "sheet", "deal_name", "deal_number", "status", "owner", "commentary", "saved_at"]].copy()
+    out = out.rename(
+        columns={
+            "deal_key": "Deal Key",
+            "sheet": "Type",
+            "deal_name": "Deal Name",
+            "deal_number": "Deal #",
             "status": "Status",
             "owner": "Owner",
             "commentary": "AM Commentary",
             "saved_at": "Last Saved",
         }
     )
+    out["Reviewed"] = out["Deal Key"].map(lambda key: bool(flags.get(key, False)))
+
+    if overrides:
+        changed_keys = set(get_override_key(item["sheet"], item["deal_number"]) for item in overrides.values())
+        out = out[(out["Reviewed"] == True) | (out["Deal Key"].isin(changed_keys))].copy()  # noqa: E712
+    else:
+        out = out[out["Reviewed"] == True].copy()  # noqa: E712
+
+    return out[["Type", "Deal Name", "Deal #", "Reviewed", "Status", "Owner", "AM Commentary", "Last Saved"]]
 
 
-def export_overrides_csv(overrides: Dict[str, Dict[str, str]]) -> bytes:
-    if not overrides:
+def export_overrides_csv(raw_deck: pd.DataFrame) -> bytes:
+    export_df = build_updates_dataframe(raw_deck, apply_overrides(raw_deck, ensure_override_store()))
+    if export_df.empty:
         return b""
-    df = pd.DataFrame(overrides.values()).sort_values(["sheet", "deal_number"])
-    return df.to_csv(index=False).encode("utf-8")
+    return export_df.to_csv(index=False).encode("utf-8")
 
 
 def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, str]]) -> bytes:
@@ -703,7 +836,9 @@ def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, str]
 
         header_row, last_col = find_header_row(ws)
         headers = [ws.cell(header_row, c).value for c in range(1, last_col + 1)]
-        key_col = next(c for c, header in enumerate(headers, start=1) if canon_header(header) == canon_header("Deal Number"))
+        key_col = next(
+            c for c, header in enumerate(headers, start=1) if canon_header(header) == canon_header("Deal Number")
+        )
         status_col = next(
             (c for c, header in enumerate(headers, start=1) if canon_header(header) == canon_header("Status")),
             None,
@@ -744,316 +879,449 @@ def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, str]
     return out.getvalue()
 
 
-def render_overview_tab(deck: pd.DataFrame, as_of_date: dt.date) -> None:
-    if deck.empty:
-        st.warning("No deals match the current filters.")
-        return
+def render_controls_bar(workbook_name: str) -> None:
+    left, middle, right = st.columns([1.5, 1.6, 1.1], vertical_alignment="center")
 
+    with left:
+        st.markdown(
+            "<div class='topline'><div class='topline-title'>Weekly Portfolio Meeting Deck</div>"
+            "<div class='topline-subtitle'>Compact review flow built around original workbook order.</div></div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"Workbook: {workbook_name}")
+
+    with middle:
+        st.segmented_control(
+            "View",
+            options=["Overview", "Presentation", "Review", "Exports"],
+            key="view_mode",
+            label_visibility="collapsed",
+            width="stretch",
+        )
+
+    with right:
+        with st.popover("Controls", icon=":material/tune:", width="stretch"):
+            st.file_uploader("Upload workbook", type=["xlsx"], key="uploaded_workbook")
+            st.date_input("As-of date", key="as_of_date")
+            st.toggle("Include hidden rows", key="include_hidden")
+            st.segmented_control(
+                "Sheet focus",
+                options=["All", "Bridge", "Term"],
+                key="sheet_filter",
+                width="stretch",
+            )
+            st.text_input("Search deal # / name / borrower", key="search_query")
+            st.toggle("Pending review only", key="pending_only")
+            if st.button("Reset filters", use_container_width=True):
+                st.session_state.sheet_filter = "All"
+                st.session_state.search_query = ""
+                st.session_state.pending_only = False
+                st.rerun()
+
+
+def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     total_upb = deck["upb"].fillna(0).sum()
     bridge_count = int((deck["sheet"] == "Bridge").sum())
     term_count = int((deck["sheet"] == "Term").sum())
     next_30 = int((deck["days_to_maturity"].fillna(9999) <= 30).sum())
-    past_due_next_payment = int((deck["days_to_next_payment"].fillna(9999) < 0).sum())
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Agenda items", fmt_int(len(deck)))
-    c2.metric("Bridge deals", fmt_int(bridge_count))
-    c3.metric("Term deals", fmt_int(term_count))
-    c4.metric("Total UPB", fmt_money(total_upb, decimals=0))
-    c5.metric("Maturing in 30d", fmt_int(next_30), f"Past due next pay: {fmt_int(past_due_next_payment)}")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Agenda items", fmt_int(len(deck)))
+    m2.metric("Total UPB", fmt_money(total_upb, decimals=0))
+    m3.metric("Bridge / Term", f"{fmt_int(bridge_count)} / {fmt_int(term_count)}")
+    m4.metric("Maturing in 30d", fmt_int(next_30), as_of_date.strftime("%m/%d/%Y"))
 
-    st.markdown(f"<div class='agenda-caption'>Agenda order is preserved exactly as it appears in the workbook. As of {as_of_date.strftime('%m/%d/%Y')}.</div>", unsafe_allow_html=True)
-
-    left, right = st.columns([1.12, 0.88])
-
-    with left:
-        st.subheader("Agenda queue")
-        st.dataframe(build_queue_dataframe(deck), use_container_width=True, hide_index=True)
-
-    with right:
-        st.subheader("Upcoming dates")
-        upcoming = deck.copy()
-        upcoming["Maturity"] = upcoming["maturity_date"].map(fmt_date)
-        upcoming["Next Payment"] = upcoming["next_payment_date"].map(fmt_date)
-        upcoming["DPD"] = upcoming["days_past_due"].map(fmt_int)
-        upcoming["UPB"] = upcoming["upb"].map(lambda x: fmt_money(x, decimals=0))
-        upcoming = upcoming[
-            [
-                "sheet",
-                "deal_name",
-                "Maturity",
-                "Next Payment",
-                "DPD",
-                "UPB",
-            ]
-        ].rename(columns={"sheet": "Type", "deal_name": "Deal Name"})
-        st.dataframe(upcoming, use_container_width=True, hide_index=True, height=520)
-
-
-def render_presentation_tab(deck: pd.DataFrame, status_suggestions: List[str]) -> None:
-    if deck.empty:
-        st.warning("No deals match the current filters.")
-        return
-
-    if "deck_index" not in st.session_state:
-        st.session_state.deck_index = 0
-    st.session_state.deck_index = int(np.clip(st.session_state.deck_index, 0, len(deck) - 1))
-
-    nav1, nav2, nav3 = st.columns([0.9, 0.9, 3.2])
-    with nav1:
-        if st.button("⬅ Previous", use_container_width=True, disabled=st.session_state.deck_index == 0):
-            st.session_state.deck_index -= 1
-    with nav2:
-        if st.button("Next ➡", use_container_width=True, disabled=st.session_state.deck_index >= len(deck) - 1):
-            st.session_state.deck_index += 1
-    with nav3:
-        jump_options = list(range(len(deck)))
-        current_index = st.selectbox(
-            "Agenda jump",
-            options=jump_options,
-            index=st.session_state.deck_index,
-            format_func=lambda i: f"{i + 1}. {deck.iloc[i]['sheet']} | {deck.iloc[i]['deal_name']}",
-        )
-        st.session_state.deck_index = current_index
-
-    row = deck.iloc[st.session_state.deck_index]
     st.markdown(
-        f"<div class='compact-progress'>Agenda item {st.session_state.deck_index + 1} of {len(deck)} • Original workbook order preserved</div>",
+        "<div class='agenda-note'>Overview stays in original workbook order. Use Review for controlled editing and Presentation for full-screen discussion.</div>",
         unsafe_allow_html=True,
     )
 
-    hero_html = f"""
-        <div class='hero-wrap'>
-            <div class='hero-kicker'>{html.escape(str(row.get('sheet', '')))} • Agenda #{st.session_state.deck_index + 1}</div>
-            <div class='hero-title'>{html.escape(display_text(row.get('deal_name')))}</div>
-            <div class='hero-subtitle'>Deal {html.escape(display_text(row.get('deal_number')))} • {html.escape(display_text(row.get('borrower')))} • {html.escape(display_text(row.get('status')))}</div>
-            <div>
-                <span class='hero-chip'>Servicer: {html.escape(display_text(row.get('servicer')))}</span>
-                <span class='hero-chip'>Owner: {html.escape(display_text(row.get('owner')))}</span>
-                <span class='hero-chip'>Portfolio: {html.escape(display_text(row.get('portfolio')))}</span>
-                <span class='hero-chip'>Segment: {html.escape(display_text(row.get('segment')))}</span>
-            </div>
-        </div>
-    """
-    st.markdown(hero_html, unsafe_allow_html=True)
-
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("UPB", fmt_money(row.get("upb"), decimals=0))
-    metric_cols[1].metric("Maturity", fmt_date(row.get("maturity_date")), fmt_day_delta(row.get("days_to_maturity")))
-    metric_cols[2].metric("Next Payment", fmt_date(row.get("next_payment_date")), fmt_day_delta(row.get("days_to_next_payment")))
-    metric_cols[3].metric("Status", display_text(row.get("status")))
-
-    left, right = st.columns([1.18, 0.92], gap="large")
+    left, right = st.columns([1.15, 0.85], gap="large")
 
     with left:
-        st.markdown("<div class='panel-card'><div class='panel-title'>Key deal view</div>", unsafe_allow_html=True)
-        render_info_grid(
-            [
-                ("Borrower", row.get("borrower")),
-                ("Account", row.get("account_display")),
-                ("Servicer", row.get("servicer")),
-                ("Owner / Point Person", row.get("owner")),
-                ("Portfolio", row.get("portfolio")),
-                ("Segment", row.get("segment")),
-                ("Financing", row.get("financing")),
-                ("Loan Buyer", row.get("loan_buyer")),
-            ]
-        )
-
-        st.markdown("<div class='subpanel-title'>Capital details</div>", unsafe_allow_html=True)
-        if row.get("sheet") == "Bridge":
-            render_info_grid(
-                [
-                    ("UPB", fmt_money(row.get("upb"), decimals=0)),
-                    ("Commitment", fmt_money(row.get("commitment"), decimals=0)),
-                    ("Funded Amount", fmt_money(row.get("funded_amount"), decimals=0)),
-                    ("Remaining Commitment", fmt_money(row.get("remaining_commitment"), decimals=0)),
-                ]
-            )
-        else:
-            render_info_grid(
-                [
-                    ("UPB", fmt_money(row.get("upb"), decimals=0)),
-                    ("Loan Amount", fmt_money(row.get("loan_amount"), decimals=0)),
-                    ("Owner / Point Person", row.get("owner")),
-                    ("Deal #", row.get("deal_number")),
-                ]
-            )
-
-        st.markdown("<div class='subpanel-title'>Dates and delinquency</div>", unsafe_allow_html=True)
-        render_date_strip(row)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.subheader("Agenda queue")
+        st.dataframe(build_agenda_dataframe(deck), hide_index=True, use_container_width=True)
 
     with right:
-        st.markdown("<div class='panel-card'><div class='panel-title'>Meeting notes</div>", unsafe_allow_html=True)
-        prompts = build_presenter_prompts(row)
-        prompt_html = "".join(f"<li>{html.escape(prompt)}</li>" for prompt in prompts)
+        st.subheader("Upcoming timing")
+        timing = deck[["sheet", "deal_name", "maturity_date", "days_to_maturity", "next_payment_date", "days_to_next_payment"]].copy()
+        timing["Maturity"] = timing["maturity_date"].map(fmt_date)
+        timing["Maturity Timing"] = timing["days_to_maturity"].map(fmt_day_delta)
+        timing["Next Payment"] = timing["next_payment_date"].map(fmt_date)
+        timing["Payment Timing"] = timing["days_to_next_payment"].map(fmt_day_delta)
+        st.dataframe(
+            timing[["sheet", "deal_name", "Maturity", "Maturity Timing", "Next Payment", "Payment Timing"]].rename(
+                columns={"sheet": "Type", "deal_name": "Deal Name"}
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
+def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+    target = st.session_state.get("dialog_target")
+    if not target:
+        return
+
+    current_row = get_row_by_key(current_deck, target)
+    raw_row = get_row_by_key(raw_deck, target)
+    if current_row is None or raw_row is None:
+        st.session_state.dialog_target = None
+        return
+
+    @st.dialog("Update current deal", width="large")
+    def edit_dialog(current_row_dict: Dict[str, object], raw_row_dict: Dict[str, object]) -> None:
+        current_row_local = pd.Series(current_row_dict)
+        raw_row_local = pd.Series(raw_row_dict)
+        flags = ensure_review_flags()
+        deal_key = str(current_row_local.get("deal_key"))
+
+        st.caption(
+            f"{display_text(current_row_local.get('deal_name'))} • Deal {display_text(current_row_local.get('deal_number'))}"
+        )
+
+        with st.form(f"edit-form::{deal_key}"):
+            reviewed = st.checkbox("Mark as reviewed", value=bool(flags.get(deal_key, False)))
+            c1, c2 = st.columns(2)
+            with c1:
+                status = st.text_input("Status", value=str(current_row_local.get("status") or ""))
+            owner_label = "Point Person" if current_row_local.get("sheet") == "Bridge" else "Asset Manager"
+            with c2:
+                owner = st.text_input(owner_label, value=str(current_row_local.get("owner") or ""))
+            commentary = st.text_area(
+                "AM Commentary",
+                value=str(current_row_local.get("commentary") or ""),
+                height=220,
+            )
+            save_clicked = st.form_submit_button("Save changes", type="primary")
+
+        c_left, c_right = st.columns(2)
+        with c_left:
+            if save_clicked:
+                flags[deal_key] = reviewed
+                upsert_override(raw_row_local, status, owner, commentary)
+                st.session_state.dialog_target = None
+                st.rerun()
+        with c_right:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.dialog_target = None
+                st.rerun()
+
+    edit_dialog(current_row.to_dict(), raw_row.to_dict())
+
+
+def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+    sync_selected_deal(deck)
+    current_row = get_selected_row(deck)
+    current_idx = deck.index[deck["deal_key"] == current_row["deal_key"]][0]
+    agenda_label = f"Agenda item {current_idx + 1} of {len(deck)}"
+
+    nav_left, nav_mid, nav_right, nav_more = st.columns([0.8, 0.8, 1.4, 1.1], vertical_alignment="center")
+    with nav_left:
+        st.button(
+            "Previous",
+            use_container_width=True,
+            disabled=current_idx == 0,
+            on_click=move_selection,
+            args=(deck, -1),
+        )
+    with nav_mid:
+        st.button(
+            "Next",
+            use_container_width=True,
+            disabled=current_idx >= len(deck) - 1,
+            on_click=move_selection,
+            args=(deck, 1),
+        )
+    with nav_right:
+        with st.popover("Agenda jump", icon=":material/list:", width="stretch"):
+            option_labels = [
+                f"{i + 1}. {row.sheet} | {row.deal_name}"
+                for i, row in enumerate(deck[["sheet", "deal_name"]].itertuples(index=False, name="DealRow"))
+            ]
+            selected_label = st.selectbox("Jump to", options=option_labels, index=current_idx)
+            if st.button("Go to selected deal", use_container_width=True):
+                new_idx = option_labels.index(selected_label)
+                st.session_state.selected_deal_key = deck.iloc[new_idx]["deal_key"]
+                st.rerun()
+    with nav_more:
         st.markdown(
-            f"""
-            <div class='small-muted' style='margin-bottom:0.45rem;'>Compact notes panel for live updates during the meeting.</div>
-            <ul class='signal-list'>{prompt_html}</ul>
-            """,
+            f"<div class='small-muted' style='text-align:right;padding-top:0.35rem;'>{html.escape(agenda_label)}</div>",
             unsafe_allow_html=True,
         )
 
-        input_left, input_right = st.columns(2)
-        with input_left:
-            status_value = st.text_input(
-                "Status",
-                value=str(row.get("status", "")),
-                key=f"status_input::{row['sheet']}::{row['deal_number']}",
-            )
-        owner_label = "Point Person" if row.get("sheet") == "Bridge" else "Asset Manager"
-        with input_right:
-            owner_value = st.text_input(
-                owner_label,
-                value=str(row.get("owner", "")),
-                key=f"owner_input::{row['sheet']}::{row['deal_number']}",
-            )
+    hero_html = (
+        "<div class='hero-card'>"
+        f"<div class='hero-kicker'>{html.escape(display_text(current_row.get('sheet')))}</div>"
+        f"<div class='hero-title'>{html.escape(display_text(current_row.get('deal_name')))}</div>"
+        f"<div class='hero-subtitle'>Deal {html.escape(display_text(current_row.get('deal_number')))} • "
+        f"{html.escape(display_text(current_row.get('borrower')))} • {html.escape(display_text(current_row.get('status')))}</div>"
+        f"<span class='chip'>Servicer: {html.escape(display_text(current_row.get('servicer')))}</span>"
+        f"<span class='chip'>Owner: {html.escape(display_text(current_row.get('owner')))}</span>"
+        f"<span class='chip'>Portfolio: {html.escape(display_text(current_row.get('portfolio')))}</span>"
+        f"<span class='chip'>Segment: {html.escape(display_text(current_row.get('segment')))}</span>"
+        "</div>"
+    )
+    st.markdown(hero_html, unsafe_allow_html=True)
 
-        commentary_value = st.text_area(
-            "AM Commentary / live notes",
-            value=str(row.get("commentary", "")),
-            height=165,
-            key=f"commentary_input::{row['sheet']}::{row['deal_number']}",
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("UPB", fmt_money(current_row.get("upb"), decimals=0))
+    metric_cols[1].metric("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity")))
+    metric_cols[2].metric(
+        "Next Payment",
+        fmt_date(current_row.get("next_payment_date")),
+        fmt_day_delta(current_row.get("days_to_next_payment")),
+    )
+    metric_cols[3].metric("Owner", display_text(current_row.get("owner")))
+    metric_cols[4].metric("Status", display_text(current_row.get("status")))
+
+    action_left, action_mid, action_right = st.columns([0.9, 1.0, 2.1], vertical_alignment="center")
+    with action_left:
+        if st.button("Edit current deal", use_container_width=True, type="primary"):
+            st.session_state.dialog_target = current_row["deal_key"]
+            st.rerun()
+    with action_mid:
+        with st.popover("Presenter prompts", icon=":material/lightbulb:", width="stretch"):
+            for prompt in build_presenter_prompts(current_row):
+                st.write(f"- {prompt}")
+    with action_right:
+        with st.popover("More deal details", icon=":material/info:", width="stretch"):
+            st.markdown("**Timing**")
+            st.write(f"Days Past Due: {fmt_int(current_row.get('days_past_due'))}")
+            st.write(f"Maturity: {fmt_date(current_row.get('maturity_date'))} ({fmt_day_delta(current_row.get('days_to_maturity'))})")
+            st.write(f"Next Payment: {fmt_date(current_row.get('next_payment_date'))} ({fmt_day_delta(current_row.get('days_to_next_payment'))})")
+            st.markdown("**Additional fields**")
+            st.write(f"Account: {display_text(current_row.get('account_display'))}")
+            st.write(f"Financing: {display_text(current_row.get('financing'))}")
+            st.write(f"Loan Buyer: {display_text(current_row.get('loan_buyer'))}")
+            if current_row.get("sheet") == "Bridge":
+                st.write(f"Commitment: {fmt_money(current_row.get('commitment'), decimals=0)}")
+                st.write(f"Funded Amount: {fmt_money(current_row.get('funded_amount'), decimals=0)}")
+                st.write(f"Remaining Commitment: {fmt_money(current_row.get('remaining_commitment'), decimals=0)}")
+            else:
+                st.write(f"Loan Amount: {fmt_money(current_row.get('loan_amount'), decimals=0)}")
+
+    left, middle, right = st.columns([1.0, 1.0, 1.1], gap="large")
+
+    with left:
+        st.markdown("<div class='panel-card'><div class='panel-title'>Deal snapshot</div>", unsafe_allow_html=True)
+        render_field_grid(
+            [
+                ("Borrower", current_row.get("borrower")),
+                ("Account", current_row.get("account_display")),
+                ("Servicer", current_row.get("servicer")),
+                ("Portfolio", current_row.get("portfolio")),
+                ("Segment", current_row.get("segment")),
+                ("Deal #", current_row.get("deal_number")),
+            ]
         )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        with st.expander("Quick status ideas"):
-            st.write(" | ".join(status_suggestions[:12]) if status_suggestions else "No saved status ideas yet.")
+    with middle:
+        st.markdown("<div class='panel-card'><div class='panel-title'>Capital profile</div>", unsafe_allow_html=True)
+        if current_row.get("sheet") == "Bridge":
+            render_field_grid(
+                [
+                    ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
+                    ("Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
+                    ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
+                    ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
+                    ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
+                    ("Next Payment", fmt_date(current_row.get("next_payment_date"))),
+                ]
+            )
+        else:
+            render_field_grid(
+                [
+                    ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
+                    ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
+                    ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
+                    ("Next Payment", fmt_date(current_row.get("next_payment_date"))),
+                    ("Owner", current_row.get("owner")),
+                    ("Financing", current_row.get("financing")),
+                ]
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        if st.button("Save this update", use_container_width=True, type="primary"):
-            overrides = ensure_override_store()
-            key = get_override_key(str(row.get("sheet")), str(row.get("deal_number")))
-            overrides[key] = {
-                "sheet": str(row.get("sheet")),
-                "deal_number": str(row.get("deal_number")),
-                "status": status_value,
-                "owner": owner_value,
-                "commentary": commentary_value,
-                "saved_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            st.toast("Saved to meeting log.")
-
+    with right:
+        st.markdown("<div class='panel-card'><div class='panel-title'>Meeting console</div>", unsafe_allow_html=True)
+        reviewed = bool(ensure_review_flags().get(current_row["deal_key"], False))
+        st.markdown(
+            f"<span class='mini-chip'>Reviewed: {'Yes' if reviewed else 'No'}</span>"
+            f"<span class='mini-chip'>Last saved: {html.escape(display_text(current_row.get('saved_at')))}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div class='small-muted' style='margin:0.45rem 0 0.35rem 0;'>AM Commentary</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='notes-box'>{html.escape(display_text(current_row.get('commentary'), blank='No commentary yet.'))}</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div class='small-muted' style='margin-top:0.55rem;'>Open the dialog when you need to update status, owner, commentary, or reviewed state without pushing the whole page downward.</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_meeting_log_tab(displayed_deck: pd.DataFrame, file_bytes: bytes, workbook_name: str) -> None:
-    overrides = ensure_override_store()
-    st.metric("Saved meeting updates", fmt_int(len(overrides)))
+def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+    st.markdown(
+        "<div class='agenda-note'>Controlled review workflow: only <b>Reviewed</b>, <b>Status</b>, <b>Owner</b>, and <b>AM Commentary</b> are editable here.</div>",
+        unsafe_allow_html=True,
+    )
 
-    if overrides:
-        updates_df = pd.DataFrame(overrides.values()).sort_values(["sheet", "deal_number"])
-        st.dataframe(updates_df, use_container_width=True, hide_index=True)
+    review_scope = st.segmented_control(
+        "Review scope",
+        options=["All", "Pending", "Edited"],
+        default="All",
+        key="review_scope",
+        width="content",
+    )
+
+    editor_df = build_review_dataframe(deck)
+    flags = ensure_review_flags()
+    overrides = ensure_override_store()
+
+    if review_scope == "Pending":
+        pending_keys = [key for key in editor_df.index if not bool(flags.get(key, False))]
+        editor_df = editor_df.loc[pending_keys]
+    elif review_scope == "Edited":
+        changed_keys = {get_override_key(item["sheet"], item["deal_number"]) for item in overrides.values()}
+        editor_df = editor_df.loc[[key for key in editor_df.index if key in changed_keys]]
+
+    if editor_df.empty:
+        st.info("No rows match the current review scope.")
+        return
+
+    disabled_columns = [
+        "Agenda #",
+        "Type",
+        "Deal Name",
+        "Deal #",
+        "Maturity",
+        "Next Payment",
+        "UPB",
+    ]
+
+    edited_df = st.data_editor(
+        editor_df,
+        hide_index=True,
+        width="stretch",
+        num_rows="fixed",
+        row_height=40,
+        disabled=disabled_columns,
+        column_config={
+            "Agenda #": st.column_config.NumberColumn("Agenda #", width="small", format="%d"),
+            "Type": st.column_config.TextColumn("Type", width="small"),
+            "Deal Name": st.column_config.TextColumn("Deal Name", width="large"),
+            "Deal #": st.column_config.TextColumn("Deal #", width="small"),
+            "Maturity": st.column_config.TextColumn("Maturity", width="small"),
+            "Next Payment": st.column_config.TextColumn("Next Payment", width="small"),
+            "UPB": st.column_config.TextColumn("UPB", width="small"),
+            "Reviewed": st.column_config.CheckboxColumn("Reviewed", width="small"),
+            "Status": st.column_config.TextColumn("Status", width="medium"),
+            "Owner": st.column_config.TextColumn("Owner / Point Person", width="medium"),
+            "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
+        },
+        key="review_editor",
+    )
+
+    c1, c2, c3 = st.columns([1.1, 1.1, 2.2], vertical_alignment="center")
+    with c1:
+        if st.button("Apply review changes", use_container_width=True, type="primary"):
+            apply_review_edits(edited_df, deck, raw_deck)
+            st.toast("Review changes applied.")
+            st.rerun()
+    with c2:
+        if st.button("Mark visible reviewed", use_container_width=True):
+            visible_flags = ensure_review_flags()
+            for deal_key in edited_df.index.tolist():
+                visible_flags[deal_key] = True
+            st.rerun()
+    with c3:
+        st.caption("Use Presentation for one-deal-at-a-time discussion. Use Review when you want a fast controlled pass down the agenda.")
+
+
+def render_exports_view(raw_deck: pd.DataFrame, deck: pd.DataFrame, file_bytes: bytes, workbook_name: str) -> None:
+    updates_df = build_updates_dataframe(raw_deck, deck)
+
+    m1, m2 = st.columns(2)
+    m1.metric("Reviewed deals", fmt_int(sum(1 for value in ensure_review_flags().values() if value)))
+    m2.metric("Saved overrides", fmt_int(len(ensure_override_store())))
+
+    if updates_df.empty:
+        st.info("No reviewed rows or saved changes yet.")
     else:
-        st.info("No live updates saved yet. Use the Presentation Mode tab to update status, owner, or commentary.")
+        st.dataframe(updates_df, hide_index=True, use_container_width=True)
 
     c1, c2 = st.columns(2)
     with c1:
         st.download_button(
-            "Download meeting updates CSV",
-            data=export_overrides_csv(overrides),
+            "Download review log CSV",
+            data=export_overrides_csv(raw_deck),
             file_name=f"{Path(workbook_name).stem}_meeting_updates.csv",
             mime="text/csv",
-            disabled=not bool(overrides),
+            disabled=updates_df.empty,
             use_container_width=True,
         )
     with c2:
         st.download_button(
             "Download updated workbook",
-            data=update_workbook_bytes(file_bytes, overrides),
+            data=update_workbook_bytes(file_bytes, ensure_override_store()),
             file_name=f"{Path(workbook_name).stem}_meeting_ready.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
-    st.subheader("Current agenda queue")
-    st.dataframe(build_queue_dataframe(displayed_deck), use_container_width=True, hide_index=True)
 
-
-def sidebar_file_picker() -> Tuple[Optional[bytes], str]:
-    st.sidebar.header("Workbook")
-    uploaded = st.sidebar.file_uploader("Upload Portfolio Overview workbook", type=["xlsx"])
-
+def get_workbook_bytes() -> Tuple[Optional[bytes], str]:
+    uploaded = st.session_state.get("uploaded_workbook")
     if uploaded is not None:
         return uploaded.getvalue(), uploaded.name
 
     sample_file = first_existing_file(DEFAULT_SAMPLE_FILES)
     if sample_file is not None:
-        st.sidebar.caption(f"Using local workbook: {sample_file.name}")
         return sample_file.read_bytes(), sample_file.name
-
     return None, ""
 
 
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
+    initialize_state()
     apply_app_css()
 
-    st.markdown(
-        """
-        <div class='app-header'>Weekly Portfolio Meeting Deck</div>
-        <div class='app-subheader'>Compact presentation view built for screen share. Original workbook order stays intact: Bridge first, then Term.</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    preview_bytes, preview_name = get_workbook_bytes()
+    render_controls_bar(preview_name if preview_name else "No workbook loaded")
+    file_bytes, workbook_name = get_workbook_bytes()
 
-    file_bytes, workbook_name = sidebar_file_picker()
     if file_bytes is None:
-        st.warning("Upload your Portfolio Overview workbook to begin.")
+        st.info("Open the Controls popover and upload your Portfolio Overview workbook to begin.")
         st.stop()
 
-    as_of_date = st.sidebar.date_input("As-of date", value=dt.date.today())
-    include_hidden = st.sidebar.checkbox("Include hidden rows", value=False)
-
-    deck, _metadata = load_portfolio_workbook(
+    raw_deck, _metadata = load_portfolio_workbook(
         file_bytes=file_bytes,
-        as_of_date_iso=as_of_date.isoformat(),
-        include_hidden=include_hidden,
+        as_of_date_iso=st.session_state.as_of_date.isoformat(),
+        include_hidden=bool(st.session_state.include_hidden),
     )
 
-    if deck.empty:
+    if raw_deck.empty:
         st.error("No usable Bridge / Term rows were found in this workbook.")
         st.stop()
 
-    overrides = ensure_override_store()
-    deck = apply_overrides(deck, overrides)
-    status_suggestions = available_status_suggestions(deck)
+    current_deck = apply_overrides(raw_deck, ensure_override_store())
+    filtered_deck = apply_filters(current_deck)
 
-    st.sidebar.header("Filters")
-    sheet_choices = st.sidebar.multiselect("Loan type", options=["Bridge", "Term"], default=["Bridge", "Term"])
-
-    if not sheet_choices:
-        filtered = deck.iloc[0:0].copy()
-    else:
-        filtered = deck[deck["sheet"].isin(sheet_choices)].copy()
-
-    search_text = st.sidebar.text_input("Search deal # / name / borrower")
-    if search_text and not filtered.empty:
-        search_upper = search_text.strip().upper()
-        filtered = filtered[
-            filtered["deal_number"].astype(str).str.upper().str.contains(search_upper, na=False)
-            | filtered["deal_name"].astype(str).str.upper().str.contains(search_upper, na=False)
-            | filtered["borrower"].astype(str).str.upper().str.contains(search_upper, na=False)
-        ].copy()
-
-    filtered = filtered.sort_values(["sheet_order", "original_order"], ascending=[True, True], kind="stable").reset_index(drop=True)
-
-    if filtered.empty:
+    if filtered_deck.empty:
         st.warning("No deals match the current filters.")
         st.stop()
 
-    if "deck_index" not in st.session_state:
-        st.session_state.deck_index = 0
-    if st.session_state.deck_index >= len(filtered):
-        st.session_state.deck_index = 0
+    sync_selected_deal(filtered_deck)
+    maybe_open_edit_dialog(filtered_deck, raw_deck)
 
-    tabs = st.tabs(["Overview", "Presentation Mode", "Meeting Log"])
-    with tabs[0]:
-        render_overview_tab(filtered, as_of_date)
-    with tabs[1]:
-        render_presentation_tab(filtered, status_suggestions)
-    with tabs[2]:
-        render_meeting_log_tab(filtered, file_bytes, workbook_name)
+    if st.session_state.view_mode == "Overview":
+        render_overview_view(filtered_deck, st.session_state.as_of_date)
+    elif st.session_state.view_mode == "Presentation":
+        render_presentation_view(filtered_deck, raw_deck)
+    elif st.session_state.view_mode == "Review":
+        render_review_view(filtered_deck, raw_deck)
+    else:
+        render_exports_view(raw_deck, current_deck, file_bytes, workbook_name)
 
 
 if __name__ == "__main__":
