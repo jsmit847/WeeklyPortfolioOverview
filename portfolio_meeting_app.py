@@ -1328,269 +1328,318 @@ def first_nonblank_value(*values: object) -> object:
 
 PRESENTATION_CSS = """
 <style>
-    .rt-stage {
-        margin-top: 0.2rem;
-    }
     .rt-hero {
-        border: 1px solid rgba(15, 23, 42, 0.10);
-        border-radius: 26px;
-        padding: 1.15rem 1.25rem;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        border-radius: 30px;
+        padding: 1.35rem 1.45rem;
         background:
-            radial-gradient(circle at top left, rgba(99, 102, 241, 0.22), transparent 30%),
-            radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.18), transparent 34%),
-            linear-gradient(135deg, #ffffff 0%, #f8fafc 48%, #eef2ff 100%);
-        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
-        margin: 0.75rem 0 0.85rem 0;
+            radial-gradient(circle at 8% 18%, rgba(56, 189, 248, 0.40), transparent 23%),
+            radial-gradient(circle at 92% 18%, rgba(168, 85, 247, 0.28), transparent 24%),
+            linear-gradient(135deg, #0f172a 0%, #1e293b 54%, #0f766e 135%);
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.20);
+        margin: 0.72rem 0 0.95rem 0;
+    }
+    .rt-hero:after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+            linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px);
+        background-size: 38px 38px;
+        mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+        pointer-events: none;
     }
     .rt-hero-top {
+        position: relative;
+        z-index: 1;
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 1rem;
+        gap: 1.1rem;
     }
     .rt-eyebrow {
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.08);
-        color: #0f172a;
-        padding: 0.28rem 0.68rem;
+        background: rgba(255, 255, 255, 0.13);
+        color: rgba(255,255,255,0.92);
+        border: 1px solid rgba(255,255,255,0.22);
+        padding: 0.34rem 0.72rem;
         font-size: 0.72rem;
-        font-weight: 800;
-        letter-spacing: 0.05em;
+        font-weight: 900;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
+        backdrop-filter: blur(10px);
     }
     .rt-hero-title {
-        font-size: clamp(1.75rem, 3.2vw, 3.1rem);
-        line-height: 1.02;
-        font-weight: 900;
-        margin: 0.58rem 0 0.38rem 0;
-        color: #0f172a;
-        letter-spacing: -0.045em;
+        max-width: 980px;
+        font-size: clamp(2.0rem, 4.0vw, 4.25rem);
+        line-height: 0.96;
+        font-weight: 950;
+        margin: 0.65rem 0 0.42rem 0;
+        color: #ffffff;
+        letter-spacing: -0.06em;
+        text-wrap: balance;
     }
     .rt-hero-subtitle {
-        font-size: 1.02rem;
-        color: rgba(15, 23, 42, 0.76);
-        font-weight: 650;
-        line-height: 1.35;
-        margin-bottom: 0.85rem;
+        font-size: 1.03rem;
+        color: rgba(226, 232, 240, 0.92);
+        font-weight: 700;
+        line-height: 1.36;
+        margin-bottom: 0.9rem;
     }
     .rt-chip-row {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.42rem;
+        gap: 0.45rem;
     }
     .rt-chip {
-        border: 1px solid rgba(15, 23, 42, 0.10);
-        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.92);
         border-radius: 999px;
-        padding: 0.36rem 0.64rem;
+        padding: 0.38rem 0.68rem;
         font-size: 0.82rem;
-        color: rgba(15, 23, 42, 0.82);
-        font-weight: 750;
+        font-weight: 800;
+        backdrop-filter: blur(10px);
     }
     .rt-status-pill {
-        border-radius: 18px;
-        padding: 0.68rem 0.82rem;
-        min-width: 170px;
+        border-radius: 22px;
+        padding: 0.78rem 0.9rem;
+        min-width: 190px;
         text-align: right;
-        border: 1px solid rgba(15, 23, 42, 0.10);
-        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(255, 255, 255, 0.14);
+        box-shadow: 0 18px 35px rgba(15, 23, 42, 0.18);
+        backdrop-filter: blur(12px);
     }
     .rt-status-pill .rt-label {
         font-size: 0.68rem;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
-        color: rgba(15, 23, 42, 0.54);
-        font-weight: 900;
+        color: rgba(226, 232, 240, 0.82);
+        font-weight: 950;
     }
     .rt-status-pill .rt-value {
-        margin-top: 0.14rem;
-        font-size: 1.02rem;
-        font-weight: 900;
-        color: #0f172a;
+        margin-top: 0.18rem;
+        font-size: 1.13rem;
+        font-weight: 950;
+        color: #ffffff;
+        overflow-wrap: anywhere;
     }
     .rt-status-warning {
-        background: linear-gradient(135deg, #fff7ed, #ffedd5);
-        border-color: rgba(234, 88, 12, 0.26);
+        background: rgba(251, 146, 60, 0.20);
+        border-color: rgba(253, 186, 116, 0.52);
     }
     .rt-status-ok {
-        background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-        border-color: rgba(22, 163, 74, 0.23);
+        background: rgba(34, 197, 94, 0.18);
+        border-color: rgba(134, 239, 172, 0.46);
     }
     .rt-kpi-grid {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.75rem;
-        margin: 0.45rem 0 0.95rem 0;
+        gap: 0.78rem;
+        margin: 0.5rem 0 1.0rem 0;
     }
     .rt-kpi {
         position: relative;
         overflow: hidden;
         border: 1px solid rgba(15, 23, 42, 0.10);
-        border-radius: 20px;
-        background: linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.055);
-        padding: 0.88rem 0.88rem 0.76rem 0.88rem;
-        min-height: 108px;
+        border-radius: 22px;
+        background:
+            radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 32%),
+            linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+        padding: 0.95rem 0.95rem 0.82rem 0.95rem;
+        min-height: 116px;
     }
     .rt-kpi:before {
         content: "";
         position: absolute;
-        inset: 0 auto 0 0;
-        width: 5px;
-        background: linear-gradient(180deg, #4f46e5, #06b6d4);
-        opacity: 0.85;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 5px;
+        background: linear-gradient(90deg, #0ea5e9, #6366f1, #14b8a6);
     }
     .rt-kpi-label {
-        color: rgba(15, 23, 42, 0.58);
-        font-size: 0.72rem;
-        font-weight: 900;
-        letter-spacing: 0.06em;
+        color: rgba(15, 23, 42, 0.56);
+        font-size: 0.70rem;
+        font-weight: 950;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
-        margin-bottom: 0.28rem;
+        margin-bottom: 0.32rem;
     }
     .rt-kpi-value {
         color: #0f172a;
-        font-size: clamp(1.02rem, 1.35vw, 1.45rem);
+        font-size: clamp(1.06rem, 1.42vw, 1.55rem);
         font-weight: 950;
-        line-height: 1.06;
+        line-height: 1.02;
         overflow-wrap: anywhere;
     }
     .rt-kpi-helper {
-        margin-top: 0.38rem;
-        color: rgba(15, 23, 42, 0.58);
+        margin-top: 0.44rem;
+        color: rgba(15, 23, 42, 0.55);
         font-size: 0.78rem;
-        font-weight: 700;
+        font-weight: 800;
     }
     .rt-panel {
         border: 1px solid rgba(15, 23, 42, 0.10);
-        border-radius: 24px;
-        background: linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
-        padding: 1rem 1.05rem;
-        margin-bottom: 0.82rem;
+        border-radius: 26px;
+        background:
+            radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 26%),
+            linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 18px 38px rgba(15, 23, 42, 0.075);
+        padding: 1.02rem 1.05rem;
+        margin-bottom: 0.85rem;
     }
     .rt-panel-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 0.75rem;
-        margin-bottom: 0.8rem;
-        padding-bottom: 0.65rem;
+        margin-bottom: 0.82rem;
+        padding-bottom: 0.68rem;
         border-bottom: 1px solid rgba(15, 23, 42, 0.08);
     }
     .rt-panel-title {
-        font-size: 1.05rem;
+        font-size: 1.14rem;
         font-weight: 950;
         color: #0f172a;
-        letter-spacing: -0.02em;
+        letter-spacing: -0.03em;
     }
     .rt-panel-note {
         border-radius: 999px;
         background: rgba(15, 23, 42, 0.07);
-        padding: 0.24rem 0.56rem;
+        padding: 0.28rem 0.6rem;
         color: rgba(15, 23, 42, 0.68);
-        font-size: 0.74rem;
-        font-weight: 850;
+        font-size: 0.75rem;
+        font-weight: 900;
     }
     .rt-field-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.68rem;
+        gap: 0.72rem;
     }
     .rt-field {
-        border-radius: 16px;
-        background: rgba(241, 245, 249, 0.76);
-        border: 1px solid rgba(15, 23, 42, 0.06);
-        padding: 0.68rem 0.72rem;
-        min-height: 74px;
+        border-radius: 18px;
+        background: rgba(241, 245, 249, 0.80);
+        border: 1px solid rgba(15, 23, 42, 0.065);
+        padding: 0.72rem 0.76rem;
+        min-height: 78px;
     }
     .rt-field-label {
         font-size: 0.68rem;
         color: rgba(15, 23, 42, 0.54);
-        font-weight: 900;
+        font-weight: 950;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        margin-bottom: 0.22rem;
+        letter-spacing: 0.07em;
+        margin-bottom: 0.24rem;
     }
     .rt-field-value {
-        font-size: 1rem;
-        font-weight: 900;
+        font-size: 1.04rem;
+        font-weight: 950;
         color: #0f172a;
-        line-height: 1.16;
+        line-height: 1.14;
         overflow-wrap: anywhere;
     }
     .rt-status-card {
-        border-radius: 24px;
-        padding: 1rem 1.05rem;
-        margin-bottom: 0.82rem;
+        border-radius: 26px;
+        padding: 1.05rem 1.08rem;
+        margin-bottom: 0.85rem;
         border: 1px solid rgba(15, 23, 42, 0.10);
-        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+        box-shadow: 0 18px 38px rgba(15, 23, 42, 0.075);
     }
     .rt-status-card-warning {
-        background: linear-gradient(135deg, #fff7ed, #fffbeb);
-        border-color: rgba(234, 88, 12, 0.26);
+        background:
+            radial-gradient(circle at top right, rgba(251, 146, 60, 0.18), transparent 30%),
+            linear-gradient(135deg, #fff7ed, #fffbeb);
+        border-color: rgba(234, 88, 12, 0.28);
     }
     .rt-status-card-ok {
-        background: linear-gradient(135deg, #f0fdf4, #ecfeff);
+        background:
+            radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 30%),
+            linear-gradient(135deg, #f0fdf4, #ecfeff);
         border-color: rgba(22, 163, 74, 0.22);
     }
     .rt-status-card-title {
-        font-size: 1.02rem;
+        font-size: 1.08rem;
         font-weight: 950;
         color: #0f172a;
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.32rem;
     }
     .rt-status-card-body {
         color: rgba(15, 23, 42, 0.76);
-        font-size: 0.92rem;
-        font-weight: 650;
-        line-height: 1.35;
+        font-size: 0.94rem;
+        font-weight: 700;
+        line-height: 1.38;
     }
     .rt-prompt-list {
         display: flex;
         flex-direction: column;
-        gap: 0.55rem;
+        gap: 0.58rem;
     }
     .rt-prompt {
         display: grid;
-        grid-template-columns: 34px minmax(0, 1fr);
-        gap: 0.65rem;
-        border-radius: 16px;
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 0.66rem;
+        border-radius: 18px;
         border: 1px solid rgba(15, 23, 42, 0.08);
-        background: rgba(248, 250, 252, 0.88);
-        padding: 0.68rem 0.72rem;
+        background: rgba(248, 250, 252, 0.92);
+        padding: 0.74rem 0.76rem;
     }
     .rt-prompt-num {
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 11px;
-        background: linear-gradient(135deg, #4f46e5, #06b6d4);
+        border-radius: 12px;
+        background: linear-gradient(135deg, #0ea5e9, #6366f1);
         color: #ffffff;
         font-weight: 950;
-        font-size: 0.9rem;
+        font-size: 0.92rem;
     }
     .rt-prompt-text {
         color: rgba(15, 23, 42, 0.86);
-        font-weight: 750;
-        line-height: 1.28;
-        font-size: 0.94rem;
+        font-weight: 800;
+        line-height: 1.30;
+        font-size: 0.95rem;
     }
     .rt-commentary {
-        border-radius: 18px;
+        border-radius: 20px;
         border: 1px solid rgba(15, 23, 42, 0.08);
-        background: #ffffff;
-        padding: 0.82rem 0.88rem;
+        background: rgba(255, 255, 255, 0.88);
+        padding: 0.88rem 0.92rem;
         color: rgba(15, 23, 42, 0.86);
-        font-size: 0.95rem;
-        font-weight: 650;
-        line-height: 1.34;
+        font-size: 0.96rem;
+        font-weight: 700;
+        line-height: 1.38;
         white-space: pre-wrap;
+    }
+    .rt-mini-banner {
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        border-radius: 22px;
+        background: linear-gradient(135deg, #f8fafc, #eef2ff);
+        padding: 0.82rem 0.9rem;
+        margin-bottom: 0.85rem;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.065);
+    }
+    .rt-mini-banner-title {
+        color: #0f172a;
+        font-weight: 950;
+        font-size: 0.98rem;
+        margin-bottom: 0.2rem;
+    }
+    .rt-mini-banner-body {
+        color: rgba(15, 23, 42, 0.66);
+        font-weight: 700;
+        font-size: 0.86rem;
+        line-height: 1.28;
     }
     @media (max-width: 1100px) {
         .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1767,8 +1816,8 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     deal_key = str(current_row.get("deal_key"))
 
     with st.container(border=True):
-        top_left, top_mid, top_filter, top_jump, top_edit = st.columns(
-            [0.75, 0.75, 1.2, 2.8, 1.0],
+        top_left, top_mid, top_filter, top_jump, top_prompt, top_edit = st.columns(
+            [0.72, 0.72, 1.12, 2.55, 1.05, 0.98],
             vertical_alignment="bottom",
         )
         with top_left:
@@ -1796,6 +1845,9 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             )
         with top_jump:
             render_agenda_jump(deck, current_idx)
+        with top_prompt:
+            with st.popover("Prompts", icon=":material/lightbulb:", width="stretch"):
+                render_html_prompt_panel(build_presenter_prompts(current_row))
         with top_edit:
             if st.button("Edit status", type="primary", use_container_width=True):
                 st.session_state.dialog_target = deal_key
@@ -1816,9 +1868,9 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
         ]
     )
 
-    main_left, main_right = st.columns([1.18, 0.82], gap="large", vertical_alignment="top")
+    left, right = st.columns([1.34, 0.86], gap="large", vertical_alignment="top")
 
-    with main_left:
+    with left:
         render_html_field_panel(
             "Deal snapshot",
             [
@@ -1835,9 +1887,15 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
         )
         render_html_field_panel("Capital profile", build_capital_items(current_row))
 
-    with main_right:
+    with right:
         render_html_status_check_panel(current_row)
-        render_html_prompt_panel(build_presenter_prompts(current_row))
+        st.markdown(
+            "<section class='rt-mini-banner'>"
+            "<div class='rt-mini-banner-title'>Discussion tools</div>"
+            "<div class='rt-mini-banner-body'>Presenter prompts are tucked into the Prompts popover above so they do not crowd the meeting view.</div>"
+            "</section>",
+            unsafe_allow_html=True,
+        )
         render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
