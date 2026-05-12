@@ -24,6 +24,7 @@ DEFAULT_SAMPLE_FILES = [
 
 # Optional local file. Do not commit real deal-level history to a public repo.
 STATUS_HISTORY_PATH = APP_DIR / "status_history.csv"
+STATUS_HISTORY_SHEET_NAME = "_Status History"
 STATUS_STALE_MEETING_THRESHOLD = 3
 STATUS_HISTORY_COLUMNS = [
     "meeting_date",
@@ -342,6 +343,99 @@ def merge_status_history(
 def status_history_to_csv_bytes(history_df: pd.DataFrame) -> bytes:
     history = normalize_status_history(history_df)
     return history.to_csv(index=False).encode("utf-8")
+
+
+
+def read_embedded_status_history_from_workbook_bytes(file_bytes: bytes) -> pd.DataFrame:
+    """Read hidden/embedded status history from the uploaded workbook, if present."""
+    try:
+        workbook = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return empty_status_history()
+
+    try:
+        if STATUS_HISTORY_SHEET_NAME not in workbook.sheetnames:
+            return empty_status_history()
+
+        ws = workbook[STATUS_HISTORY_SHEET_NAME]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return empty_status_history()
+
+        headers = [norm_text(value) for value in rows[0]]
+        records = []
+        for row in rows[1:]:
+            if row is None or all(norm_text(value) == "" for value in row):
+                continue
+            record = {}
+            for idx, header in enumerate(headers):
+                if not header:
+                    continue
+                record[header] = row[idx] if idx < len(row) else ""
+            records.append(record)
+
+        if not records:
+            return empty_status_history()
+
+        return normalize_status_history(pd.DataFrame(records))
+
+    finally:
+        workbook.close()
+
+
+def load_embedded_status_history_if_available(file_bytes: bytes, workbook_name: str) -> None:
+    """
+    Auto-load status history from the workbook itself.
+
+    Manual CSV upload still wins. Embedded workbook history is used only when the user
+    has not uploaded a separate CSV during this session.
+    """
+    if st.session_state.get("uploaded_status_history") is not None:
+        return
+
+    signature = f"embedded:{workbook_name}:{len(file_bytes)}"
+    if signature == st.session_state.get("embedded_status_history_signature", ""):
+        return
+
+    embedded = read_embedded_status_history_from_workbook_bytes(file_bytes)
+    st.session_state.embedded_status_history_signature = signature
+
+    if embedded.empty:
+        return
+
+    st.session_state.status_history = embedded
+    st.session_state.uploaded_status_history_name = f"Embedded in {workbook_name}"
+    st.session_state.status_history_load_error = ""
+
+
+def write_status_history_sheet_to_workbook_bytes(file_bytes: bytes, history_df: pd.DataFrame) -> bytes:
+    """Embed status history directly inside the workbook as a hidden sheet."""
+    history = normalize_status_history(history_df)
+    workbook = load_workbook(io.BytesIO(file_bytes))
+
+    if STATUS_HISTORY_SHEET_NAME in workbook.sheetnames:
+        del workbook[STATUS_HISTORY_SHEET_NAME]
+
+    ws = workbook.create_sheet(STATUS_HISTORY_SHEET_NAME)
+    ws.sheet_state = "hidden"
+
+    for col_idx, header in enumerate(STATUS_HISTORY_COLUMNS, start=1):
+        ws.cell(1, col_idx).value = header
+
+    for row_idx, record in enumerate(history.to_dict("records"), start=2):
+        for col_idx, header in enumerate(STATUS_HISTORY_COLUMNS, start=1):
+            ws.cell(row_idx, col_idx).value = record.get(header, "")
+
+    out = io.BytesIO()
+    workbook.save(out)
+    workbook.close()
+    out.seek(0)
+    return out.getvalue()
+
+
+def mark_current_deal_reviewed(deal_key: str) -> None:
+    flags = ensure_review_flags()
+    flags[deal_key] = True
 
 
 def status_streak_for_deal(
@@ -1260,10 +1354,16 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     sync_selected_deal(deck)
     current_row = get_selected_row(deck)
-    current_idx = deck.index[deck["deal_key"] == current_row["deal_key"]][0]
-    agenda_label = f"Agenda item {current_idx + 1} of {len(deck)}"
+    current_idx = int(deck.index[deck["deal_key"] == current_row["deal_key"]][0])
+    total_count = len(deck)
+    progress_value = 0.0 if total_count <= 1 else current_idx / max(total_count - 1, 1)
+    deal_key = str(current_row.get("deal_key"))
+    flags = ensure_review_flags()
+    is_reviewed = bool(flags.get(deal_key, False))
 
-    nav_left, nav_mid, nav_right, nav_more = st.columns([0.8, 0.8, 1.4, 1.1], vertical_alignment="center")
+    st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
+
+    nav_left, nav_mid, nav_right, nav_actions = st.columns([0.75, 0.75, 2.5, 1.35], vertical_alignment="center")
     with nav_left:
         st.button(
             "Previous",
@@ -1276,86 +1376,152 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
         st.button(
             "Next",
             use_container_width=True,
-            disabled=current_idx >= len(deck) - 1,
+            disabled=current_idx >= total_count - 1,
             on_click=move_selection,
             args=(deck, 1),
         )
     with nav_right:
-        with st.popover("Agenda jump", icon=":material/list:", width="stretch"):
-            option_labels = [
-                f"{i + 1}. {row.sheet} | {row.deal_name}"
-                for i, row in enumerate(deck[["sheet", "deal_name"]].itertuples(index=False, name="DealRow"))
-            ]
-            selected_label = st.selectbox("Jump to", options=option_labels, index=current_idx)
-            if st.button("Go to selected deal", use_container_width=True):
-                new_idx = option_labels.index(selected_label)
-                st.session_state.selected_deal_key = deck.iloc[new_idx]["deal_key"]
-                st.rerun()
-    with nav_more:
-        st.caption(agenda_label)
+        option_labels = [
+            f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}"
+            for i, row in enumerate(deck[["sheet", "deal_name", "deal_number"]].itertuples(index=False, name="DealRow"))
+        ]
+        selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx, label_visibility="collapsed")
+        selected_idx = option_labels.index(selected_label)
+        if selected_idx != current_idx:
+            st.session_state.selected_deal_key = deck.iloc[selected_idx]["deal_key"]
+            st.rerun()
+    with nav_actions:
         if st.button("Edit this deal", type="primary", use_container_width=True):
-            st.session_state.dialog_target = str(current_row["deal_key"])
+            st.session_state.dialog_target = deal_key
             st.rerun()
 
-    st.caption(display_text(current_row.get("sheet")))
-    st.title(display_text(current_row.get("deal_name")))
-    st.write(
-        f"Deal {display_text(current_row.get('deal_number'))} | "
-        f"Borrower: {display_text(current_row.get('borrower'))} | "
-        f"Status: {display_text(current_row.get('status'))}"
-    )
+    title_left, title_right = st.columns([2.2, 1.0], gap="large", vertical_alignment="top")
+    with title_left:
+        st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
+        st.title(display_text(current_row.get("deal_name")))
+        st.write(
+            f"Borrower: {display_text(current_row.get('borrower'))}  |  "
+            f"Owner: {display_text(current_row.get('owner'))}  |  "
+            f"Status: {display_text(current_row.get('status'))}"
+        )
+    with title_right:
+        with st.container(border=True):
+            st.metric("Reviewed", "Yes" if is_reviewed else "No")
+            if not is_reviewed:
+                if st.button("Mark reviewed", use_container_width=True):
+                    mark_current_deal_reviewed(deal_key)
+                    st.rerun()
+            else:
+                if st.button("Undo reviewed", use_container_width=True):
+                    flags[deal_key] = False
+                    st.rerun()
 
     if bool(current_row.get("status_needs_update_prompt", False)):
         st.warning(str(current_row.get("status_prompt_message") or "Status review needed."))
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UPB", fmt_money(current_row.get("upb"), decimals=0))
-    k2.metric("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity")))
-    k3.metric("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment")))
-    k4.metric("Days Past Due", fmt_int(current_row.get("days_past_due")))
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("UPB", fmt_money(current_row.get("upb"), decimals=0))
+    metric_cols[1].metric("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity")))
+    metric_cols[2].metric("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment")))
+    metric_cols[3].metric("Days Past Due", fmt_int(current_row.get("days_past_due")))
+    metric_cols[4].metric("Same Status Mtgs", fmt_int(current_row.get("status_same_meeting_count")))
 
-    left, right = st.columns([1.05, 0.95], gap="large")
-    with left:
-        st.subheader("Deal facts")
-        render_field_grid(
-            [
-                ("Servicer", current_row.get("servicer")),
-                ("Owner", current_row.get("owner")),
-                ("Portfolio", current_row.get("portfolio")),
-                ("Segment", current_row.get("segment")),
-                ("Financing", current_row.get("financing")),
-                ("Loan Buyer", current_row.get("loan_buyer")),
-                ("NPL / Delinquency", current_row.get("npl_raw")),
-                ("Same Status Meetings", current_row.get("status_same_meeting_count")),
-            ]
-        )
+    prompt_tab, detail_tab, commentary_tab, agenda_tab = st.tabs(
+        ["Talking points", "Deal details", "Commentary", "Agenda context"]
+    )
 
-        if current_row.get("sheet") == "Bridge":
-            st.subheader("Bridge amounts")
+    with prompt_tab:
+        left, right = st.columns([1.1, 0.9], gap="large")
+        with left:
+            st.subheader("Presenter prompts")
+            for prompt in build_presenter_prompts(current_row):
+                st.info(prompt)
+        with right:
+            st.subheader("Status check")
+            with st.container(border=True):
+                st.write(f"Current status: {display_text(current_row.get('status'))}")
+                st.write(f"Same status since: {display_text(current_row.get('status_same_since'))}")
+                st.write(f"Same status meetings: {fmt_int(current_row.get('status_same_meeting_count'))}")
+                if bool(current_row.get("status_needs_update_prompt", False)):
+                    st.warning("Update or explicitly confirm this status before closing review.")
+                else:
+                    st.success("No stale-status warning for this deal.")
+
+    with detail_tab:
+        left, right = st.columns(2, gap="large")
+        with left:
+            st.subheader("Core facts")
             render_field_grid(
                 [
-                    ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
-                    ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
-                    ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
+                    ("Servicer", current_row.get("servicer")),
+                    ("Portfolio", current_row.get("portfolio")),
+                    ("Segment", current_row.get("segment")),
+                    ("Financing", current_row.get("financing")),
+                    ("Loan Buyer", current_row.get("loan_buyer")),
+                    ("NPL / Delinquency", current_row.get("npl_raw")),
                 ]
             )
-        else:
-            st.subheader("Term amounts")
-            render_field_grid(
-                [
-                    ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
-                    ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-                ]
-            )
+        with right:
+            if current_row.get("sheet") == "Bridge":
+                st.subheader("Bridge amounts")
+                render_field_grid(
+                    [
+                        ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
+                        ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
+                        ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
+                    ]
+                )
+            else:
+                st.subheader("Term amounts")
+                render_field_grid(
+                    [
+                        ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
+                        ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
+                    ]
+                )
 
-    with right:
-        st.subheader("Presenter prompts")
-        for prompt in build_presenter_prompts(current_row):
-            st.info(prompt)
-
+    with commentary_tab:
         st.subheader("AM commentary")
         commentary = display_text(current_row.get("commentary"), blank="No commentary entered.")
         st.write(commentary)
+        if st.button("Edit status / owner / commentary", type="primary", use_container_width=True):
+            st.session_state.dialog_target = deal_key
+            st.rerun()
+
+    with agenda_tab:
+        st.subheader("Nearby agenda items")
+        start = max(current_idx - 3, 0)
+        end = min(current_idx + 4, total_count)
+        agenda_slice = deck.iloc[start:end].copy()
+        agenda_slice.insert(0, "Agenda #", range(start + 1, end + 1))
+        agenda_slice["Current"] = agenda_slice["deal_key"].map(lambda value: "Current" if value == deal_key else "")
+        agenda_slice["Status Warning"] = agenda_slice["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+        agenda_slice["UPB"] = agenda_slice["upb"].map(lambda value: fmt_money(value, decimals=0))
+        st.dataframe(
+            agenda_slice[
+                [
+                    "Agenda #",
+                    "Current",
+                    "sheet",
+                    "deal_name",
+                    "deal_number",
+                    "Status Warning",
+                    "status",
+                    "owner",
+                    "UPB",
+                ]
+            ].rename(
+                columns={
+                    "sheet": "Type",
+                    "deal_name": "Deal Name",
+                    "deal_number": "Deal #",
+                    "status": "Status",
+                    "owner": "Owner",
+                }
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
 
 
 def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
@@ -1415,6 +1581,7 @@ def render_exports_view(
     )
     update_bytes = export_overrides_csv(raw_deck, deck)
     workbook_bytes = update_workbook_bytes(file_bytes, ensure_override_store())
+    workbook_bytes = write_status_history_sheet_to_workbook_bytes(workbook_bytes, updated_history)
     agenda_bytes = build_agenda_dataframe(deck).to_csv(index=False).encode("utf-8")
 
     c1, c2 = st.columns(2)
@@ -1512,6 +1679,8 @@ def main() -> None:
     file_bytes, workbook_name = get_workbook_source()
     render_controls_bar(workbook_name)
     process_status_history_upload()
+    if file_bytes is not None:
+        load_embedded_status_history_if_available(file_bytes, workbook_name)
 
     if file_bytes is None:
         render_no_workbook_loaded()
