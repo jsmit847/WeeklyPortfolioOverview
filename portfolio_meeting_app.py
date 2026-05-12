@@ -697,7 +697,6 @@ def initialize_state() -> None:
         "sheet_filter": "All",
         "search_query": "",
         "include_hidden": False,
-        "pending_only": False,
         "stale_only": False,
         "as_of_date": dt.date.today(),
         "selected_deal_key": None,
@@ -811,9 +810,6 @@ def apply_filters(deck: pd.DataFrame) -> pd.DataFrame:
             | filtered["borrower"].astype(str).str.upper().str.contains(query, na=False)
         ].copy()
 
-    if st.session_state.pending_only:
-        flags = ensure_review_flags()
-        filtered = filtered[~filtered["deal_key"].map(lambda key: bool(flags.get(key, False)))].copy()
 
     if st.session_state.stale_only and "status_needs_update_prompt" in filtered.columns:
         filtered = filtered[filtered["status_needs_update_prompt"] == True].copy()  # noqa: E712
@@ -930,8 +926,8 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+
 def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
-    flags = ensure_review_flags()
     review = deck.copy().set_index("deal_key")
     review.insert(0, "Agenda #", range(1, len(review) + 1))
     review["Type"] = review["sheet"]
@@ -940,10 +936,7 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     review["Maturity"] = review["maturity_date"].map(fmt_date)
     review["Next Payment"] = review["next_payment_date"].map(fmt_date)
     review["UPB"] = review["upb"].map(lambda x: fmt_money(x, decimals=0))
-    review["Reviewed"] = review.index.map(lambda key: bool(flags.get(key, False)))
     review["Status Update Needed"] = review["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
-    review["Status Same Meetings"] = review["status_same_meeting_count"].fillna(0).astype(int)
-    review["Status Same Since"] = review["status_same_since"].map(display_text)
     review["Status"] = review["status"].fillna("").astype(str)
     review["Owner"] = review["owner"].fillna("").astype(str)
     review["AM Commentary"] = review["commentary"].fillna("").astype(str)
@@ -957,10 +950,7 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "Maturity",
             "Next Payment",
             "UPB",
-            "Reviewed",
             "Status Update Needed",
-            "Status Same Meetings",
-            "Status Same Since",
             "Status",
             "Owner",
             "AM Commentary",
@@ -975,12 +965,8 @@ def apply_review_edits(
 ) -> None:
     current_lookup = current_deck.set_index("deal_key")
     raw_lookup = raw_deck.set_index("deal_key")
-    flags = ensure_review_flags()
 
     for deal_key, edited_row in edited_df.iterrows():
-        reviewed_value = bool(edited_row.get("Reviewed", False))
-        flags[deal_key] = reviewed_value
-
         if deal_key not in current_lookup.index or deal_key not in raw_lookup.index:
             continue
 
@@ -999,18 +985,14 @@ def apply_review_edits(
 
 
 def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.DataFrame:
-    flags = ensure_review_flags()
     overrides = ensure_override_store()
-    reviewed_df = pd.DataFrame(
-        {
-            "Deal Key": list(flags.keys()),
-            "Reviewed": list(flags.values()),
-        }
-    )
-    reviewed_df = reviewed_df[reviewed_df["Reviewed"] == True]  # noqa: E712
-
-    if reviewed_df.empty and not overrides:
+    if not overrides:
         return pd.DataFrame()
+
+    changed_keys = {
+        get_override_key(item["sheet"], item["deal_number"])
+        for item in overrides.values()
+    }
 
     columns = [
         "deal_key",
@@ -1022,10 +1004,12 @@ def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.Da
         "commentary",
         "saved_at",
         "status_needs_update_prompt",
-        "status_same_meeting_count",
-        "status_same_since",
     ]
     out = deck[columns].copy()
+    out = out[out["deal_key"].isin(changed_keys)].copy()
+    if out.empty:
+        return pd.DataFrame()
+
     out = out.rename(
         columns={
             "deal_key": "Deal Key",
@@ -1037,38 +1021,22 @@ def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.Da
             "commentary": "AM Commentary",
             "saved_at": "Last Saved",
             "status_needs_update_prompt": "Status Update Needed",
-            "status_same_meeting_count": "Status Same Meetings",
-            "status_same_since": "Status Same Since",
         }
     )
-    out["Reviewed"] = out["Deal Key"].map(lambda key: bool(flags.get(key, False)))
     out["Status Update Needed"] = out["Status Update Needed"].map(lambda value: "Yes" if bool(value) else "")
-
-    if overrides:
-        changed_keys = {
-            get_override_key(item["sheet"], item["deal_number"])
-            for item in overrides.values()
-        }
-        out = out[(out["Reviewed"] == True) | (out["Deal Key"].isin(changed_keys))].copy()  # noqa: E712
-    else:
-        out = out[out["Reviewed"] == True].copy()  # noqa: E712
 
     return out[
         [
             "Type",
             "Deal Name",
             "Deal #",
-            "Reviewed",
             "Status Update Needed",
-            "Status Same Meetings",
-            "Status Same Since",
             "Status",
             "Owner",
             "AM Commentary",
             "Last Saved",
         ]
     ]
-
 
 def export_overrides_csv(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> bytes:
     export_df = build_updates_dataframe(raw_deck, deck)
@@ -1156,45 +1124,44 @@ def process_status_history_upload() -> None:
         st.session_state.status_history_load_error = str(exc)
 
 
-def render_controls_bar(workbook_name: str) -> None:
-    left, middle, right = st.columns([1.5, 1.6, 1.1], vertical_alignment="center")
 
-    with left:
-        st.subheader(APP_TITLE)
-        st.caption("Compact review flow built around original workbook order.")
+def render_controls_bar(workbook_name: str) -> None:
+    with st.sidebar:
+        st.title(APP_TITLE)
+        st.caption("Meeting navigation, workbook controls, and filters")
         st.caption(f"Workbook: {workbook_name}")
 
-    with middle:
-        st.segmented_control(
+        st.divider()
+        st.radio(
             "View",
             options=["Overview", "Presentation", "Review", "Exports"],
             key="view_mode",
-            label_visibility="collapsed",
-            width="stretch",
+            horizontal=False,
         )
 
-    with right:
-        with st.popover("Controls", icon=":material/tune:", width="stretch"):
-            st.file_uploader("Upload workbook", type=["xlsx"], key="uploaded_workbook")
-            st.file_uploader("Upload status history CSV", type=["csv"], key="uploaded_status_history")
-            st.date_input("As-of date", key="as_of_date")
-            st.toggle("Include hidden rows", key="include_hidden")
-            st.segmented_control(
-                "Sheet focus",
-                options=["All", "Bridge", "Term"],
-                key="sheet_filter",
-                width="stretch",
-            )
-            st.text_input("Search deal # / name / borrower", key="search_query")
-            st.toggle("Pending review only", key="pending_only")
-            st.toggle("Status warnings only", key="stale_only")
+        st.divider()
+        st.subheader("Workbook")
+        st.file_uploader("Upload workbook", type=["xlsx"], key="uploaded_workbook")
+        st.file_uploader("Upload status history CSV backup", type=["csv"], key="uploaded_status_history")
+        st.date_input("As-of date", key="as_of_date")
+        st.toggle("Include hidden rows", key="include_hidden")
 
-            if st.button("Reset filters", use_container_width=True):
-                st.session_state.sheet_filter = "All"
-                st.session_state.search_query = ""
-                st.session_state.pending_only = False
-                st.session_state.stale_only = False
-                st.rerun()
+        st.divider()
+        st.subheader("Filters")
+        st.segmented_control(
+            "Portfolio type",
+            options=["All", "Bridge", "Term"],
+            key="sheet_filter",
+            width="stretch",
+        )
+        st.text_input("Search deal # / name / borrower", key="search_query")
+        st.toggle("Status warnings only", key="stale_only")
+
+        if st.button("Reset filters", use_container_width=True):
+            st.session_state.sheet_filter = "All"
+            st.session_state.search_query = ""
+            st.session_state.stale_only = False
+            st.rerun()
 
 
 def render_status_history_notice(deck: pd.DataFrame) -> None:
@@ -1204,7 +1171,7 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Status history rows", fmt_int(len(history)))
-    c2.metric("Loaded history file", history_name)
+    c2.metric("History source", history_name)
     c3.metric("Status warnings", fmt_int(warning_count))
 
     if st.session_state.get("status_history_load_error"):
@@ -1212,10 +1179,9 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
 
     if history.empty:
         st.info(
-            "No status history is loaded yet. The app will still run, but three-meeting warnings "
-            "start working after you download the updated status history CSV and use it again next meeting."
+            "No embedded status history is loaded yet. The app will still run; status warnings begin once "
+            "you use a workbook generated by the weekly overview builder with the hidden history sheet."
         )
-
 
 def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     total_upb = deck["upb"].fillna(0).sum()
@@ -1235,15 +1201,13 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
 
     if stale_count:
         stale = deck[deck["status_needs_update_prompt"] == True].copy()  # noqa: E712
-        st.warning(f"{stale_count} deal(s) have had the same status for at least {STATUS_STALE_MEETING_THRESHOLD} meetings.")
+        st.warning(f"{stale_count} deal(s) need a status check before the meeting is closed.")
         st.dataframe(
             stale[[
                 "sheet",
                 "deal_name",
                 "deal_number",
                 "status",
-                "status_same_meeting_count",
-                "status_same_since",
                 "owner",
             ]].rename(
                 columns={
@@ -1251,8 +1215,6 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
                     "deal_name": "Deal Name",
                     "deal_number": "Deal #",
                     "status": "Status",
-                    "status_same_meeting_count": "Same Meetings",
-                    "status_same_since": "Same Since",
                     "owner": "Owner",
                 }
             ),
@@ -1261,8 +1223,8 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
         )
 
     st.info(
-        "Overview stays in original workbook order. Use Review for controlled editing and "
-        "Presentation for meeting discussion."
+        "Overview stays in original workbook order. Use Presentation for meeting discussion "
+        "and Review for controlled status/commentary edits."
     )
 
     left, right = st.columns([1.15, 0.85], gap="large")
@@ -1294,7 +1256,6 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
             use_container_width=True,
         )
 
-
 def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     target = st.session_state.get("dialog_target")
     if not target:
@@ -1310,7 +1271,6 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
     def edit_dialog(current_row_dict: Dict[str, object], raw_row_dict: Dict[str, object]) -> None:
         current_row_local = pd.Series(current_row_dict)
         raw_row_local = pd.Series(raw_row_dict)
-        flags = ensure_review_flags()
         deal_key = str(current_row_local.get("deal_key"))
 
         st.caption(
@@ -1322,7 +1282,6 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
             st.warning(str(current_row_local.get("status_prompt_message") or "Status review needed."))
 
         with st.form(f"edit-form::{deal_key}"):
-            reviewed = st.checkbox("Mark as reviewed", value=bool(flags.get(deal_key, False)))
             c1, c2 = st.columns(2)
             with c1:
                 status = st.text_input("Status", value=str(current_row_local.get("status") or ""))
@@ -1333,13 +1292,12 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
             commentary = st.text_area(
                 "AM Commentary",
                 value=str(current_row_local.get("commentary") or ""),
-                height=220,
+                height=240,
             )
 
             save_clicked = st.form_submit_button("Save changes", type="primary")
 
             if save_clicked:
-                flags[deal_key] = reviewed
                 upsert_override(raw_row_local, status, owner, commentary)
                 st.session_state.dialog_target = None
                 st.rerun()
@@ -1358,12 +1316,10 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     total_count = len(deck)
     progress_value = 0.0 if total_count <= 1 else current_idx / max(total_count - 1, 1)
     deal_key = str(current_row.get("deal_key"))
-    flags = ensure_review_flags()
-    is_reviewed = bool(flags.get(deal_key, False))
 
     st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
 
-    nav_left, nav_mid, nav_right, nav_actions = st.columns([0.75, 0.75, 2.5, 1.35], vertical_alignment="center")
+    nav_left, nav_mid, nav_jump, nav_edit = st.columns([0.75, 0.75, 2.7, 1.15], vertical_alignment="center")
     with nav_left:
         st.button(
             "Previous",
@@ -1380,105 +1336,74 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             on_click=move_selection,
             args=(deck, 1),
         )
-    with nav_right:
+    with nav_jump:
         option_labels = [
             f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}"
             for i, row in enumerate(deck[["sheet", "deal_name", "deal_number"]].itertuples(index=False, name="DealRow"))
         ]
-        selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx, label_visibility="collapsed")
+        selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx)
         selected_idx = option_labels.index(selected_label)
         if selected_idx != current_idx:
             st.session_state.selected_deal_key = deck.iloc[selected_idx]["deal_key"]
             st.rerun()
-    with nav_actions:
+    with nav_edit:
         if st.button("Edit this deal", type="primary", use_container_width=True):
             st.session_state.dialog_target = deal_key
             st.rerun()
 
-    title_left, title_right = st.columns([2.2, 1.0], gap="large", vertical_alignment="top")
-    with title_left:
-        st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
-        st.title(display_text(current_row.get("deal_name")))
-        st.write(
-            f"Borrower: {display_text(current_row.get('borrower'))}  |  "
-            f"Owner: {display_text(current_row.get('owner'))}  |  "
-            f"Status: {display_text(current_row.get('status'))}"
-        )
-    with title_right:
-        with st.container(border=True):
-            st.metric("Reviewed", "Yes" if is_reviewed else "No")
-            if not is_reviewed:
-                if st.button("Mark reviewed", use_container_width=True):
-                    mark_current_deal_reviewed(deal_key)
-                    st.rerun()
-            else:
-                if st.button("Undo reviewed", use_container_width=True):
-                    flags[deal_key] = False
-                    st.rerun()
+    st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
+    st.title(display_text(current_row.get("deal_name")))
+    st.write(
+        f"Borrower: {display_text(current_row.get('borrower'))}  |  "
+        f"Owner: {display_text(current_row.get('owner'))}"
+    )
 
     if bool(current_row.get("status_needs_update_prompt", False)):
         st.warning(str(current_row.get("status_prompt_message") or "Status review needed."))
+    else:
+        st.success("Status check clear for this deal.")
 
-    metric_cols = st.columns(5)
-    metric_cols[0].metric("UPB", fmt_money(current_row.get("upb"), decimals=0))
-    metric_cols[1].metric("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity")))
-    metric_cols[2].metric("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment")))
-    metric_cols[3].metric("Days Past Due", fmt_int(current_row.get("days_past_due")))
-    metric_cols[4].metric("Same Status Mtgs", fmt_int(current_row.get("status_same_meeting_count")))
+    st.subheader("KPI snapshot")
+    row1 = st.columns(4)
+    row1[0].metric("Status", display_text(current_row.get("status")))
+    row1[1].metric("UPB", fmt_money(current_row.get("upb"), decimals=0))
+    row1[2].metric("Maturity Date", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity")))
+    row1[3].metric("Next Payment Date", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment")))
 
-    prompt_tab, detail_tab, commentary_tab, agenda_tab = st.tabs(
-        ["Talking points", "Deal details", "Commentary", "Agenda context"]
-    )
+    row2 = st.columns(4)
+    row2[0].metric("Days Past Due", fmt_int(current_row.get("days_past_due")))
+    row2[1].metric("Servicer", display_text(current_row.get("servicer")))
+    row2[2].metric("Portfolio", display_text(current_row.get("portfolio")))
+    row2[3].metric("NPL / Delinquency", display_text(current_row.get("npl_raw")))
 
-    with prompt_tab:
-        left, right = st.columns([1.1, 0.9], gap="large")
+    row3 = st.columns(4)
+    if current_row.get("sheet") == "Bridge":
+        row3[0].metric("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0))
+        row3[1].metric("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0))
+        row3[2].metric("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0))
+        row3[3].metric("Financing", display_text(current_row.get("financing")))
+    else:
+        row3[0].metric("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0))
+        row3[1].metric("Financing", display_text(current_row.get("financing")))
+        row3[2].metric("Loan Buyer", display_text(current_row.get("loan_buyer")))
+        row3[3].metric("Segment", display_text(current_row.get("segment")))
+
+    discussion_tab, commentary_tab, agenda_tab = st.tabs(["Discussion", "Commentary", "Agenda context"])
+
+    with discussion_tab:
+        left, right = st.columns([1.2, 0.8], gap="large")
         with left:
             st.subheader("Presenter prompts")
             for prompt in build_presenter_prompts(current_row):
                 st.info(prompt)
         with right:
             st.subheader("Status check")
-            with st.container(border=True):
-                st.write(f"Current status: {display_text(current_row.get('status'))}")
-                st.write(f"Same status since: {display_text(current_row.get('status_same_since'))}")
-                st.write(f"Same status meetings: {fmt_int(current_row.get('status_same_meeting_count'))}")
-                if bool(current_row.get("status_needs_update_prompt", False)):
-                    st.warning("Update or explicitly confirm this status before closing review.")
-                else:
-                    st.success("No stale-status warning for this deal.")
-
-    with detail_tab:
-        left, right = st.columns(2, gap="large")
-        with left:
-            st.subheader("Core facts")
-            render_field_grid(
-                [
-                    ("Servicer", current_row.get("servicer")),
-                    ("Portfolio", current_row.get("portfolio")),
-                    ("Segment", current_row.get("segment")),
-                    ("Financing", current_row.get("financing")),
-                    ("Loan Buyer", current_row.get("loan_buyer")),
-                    ("NPL / Delinquency", current_row.get("npl_raw")),
-                ]
-            )
-        with right:
-            if current_row.get("sheet") == "Bridge":
-                st.subheader("Bridge amounts")
-                render_field_grid(
-                    [
-                        ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
-                        ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
-                        ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
-                    ]
-                )
+            if bool(current_row.get("status_needs_update_prompt", False)):
+                st.warning("This status needs confirmation or an update before the meeting is closed.")
             else:
-                st.subheader("Term amounts")
-                render_field_grid(
-                    [
-                        ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
-                        ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-                    ]
-                )
+                st.success("No stale-status warning for this deal.")
+            st.write(f"Current status: {display_text(current_row.get('status'))}")
+            st.write("Use Edit this deal to update status, owner, or commentary.")
 
     with commentary_tab:
         st.subheader("AM commentary")
@@ -1526,7 +1451,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
 def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     st.subheader("Review and update")
-    st.caption("Edit Status, Owner, AM Commentary, and Reviewed. Disabled columns are for reference.")
+    st.caption("Edit Status, Owner, and AM Commentary. Disabled columns are for reference.")
 
     review_df = build_review_dataframe(deck)
     edited_df = st.data_editor(
@@ -1543,11 +1468,8 @@ def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
             "Next Payment",
             "UPB",
             "Status Update Needed",
-            "Status Same Meetings",
-            "Status Same Since",
         ],
         column_config={
-            "Reviewed": st.column_config.CheckboxColumn("Reviewed"),
             "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
             "Status": st.column_config.TextColumn("Status", width="medium"),
             "Owner": st.column_config.TextColumn("Owner", width="medium"),
@@ -1561,7 +1483,7 @@ def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
             st.success("Review edits applied.")
             st.rerun()
     with c2:
-        st.caption("Download the updated workbook and status history from Exports after applying edits.")
+        st.caption("Download the updated workbook from Exports after applying edits.")
 
 
 def render_exports_view(
@@ -1587,7 +1509,7 @@ def render_exports_view(
     c1, c2 = st.columns(2)
     with c1:
         st.download_button(
-            "Download reviewed changes CSV",
+            "Download changed statuses/commentary CSV",
             data=update_bytes,
             file_name="weekly_portfolio_meeting_updates.csv",
             mime="text/csv",
@@ -1604,39 +1526,23 @@ def render_exports_view(
 
     with c2:
         st.download_button(
-            "Download updated workbook",
+            "Download updated workbook with embedded history",
             data=workbook_bytes,
             file_name=f"updated_{workbook_name}",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
         st.download_button(
-            "Download updated status history CSV",
+            "Download status history CSV backup",
             data=status_history_to_csv_bytes(updated_history),
-            file_name="status_history.csv",
+            file_name="status_history_backup.csv",
             mime="text/csv",
             use_container_width=True,
         )
 
-    st.divider()
-    st.subheader("Status history setup")
-    st.write(
-        "Use the status history CSV as the app's memory. At the end of each meeting, "
-        "download the updated status history CSV. Next meeting, upload that CSV in Controls."
-    )
-    st.write(
-        "Because this repo is public, do not commit real deal-level status history unless "
-        "you are intentionally making that data public. Keep real status_history.csv local, "
-        "in Box/OneDrive, or in a private repository."
-    )
-
-    template_df = empty_status_history()
-    st.download_button(
-        "Download blank status history template",
-        data=status_history_to_csv_bytes(template_df),
-        file_name="status_history_template.csv",
-        mime="text/csv",
-        use_container_width=True,
+    st.info(
+        "The updated workbook includes the hidden _Status History sheet. Use that workbook or the "
+        "Jupyter weekly overview generator as the normal path; the CSV is only a backup/export."
     )
 
     st.subheader("Recommended .gitignore entries")
@@ -1647,7 +1553,6 @@ def render_exports_view(
         "*.xlsx\n",
         language="gitignore",
     )
-
 
 def get_workbook_source() -> Tuple[Optional[bytes], str]:
     uploaded = st.session_state.get("uploaded_workbook")
@@ -1661,15 +1566,15 @@ def get_workbook_source() -> Tuple[Optional[bytes], str]:
     return default_path.read_bytes(), default_path.name
 
 
+
 def render_no_workbook_loaded() -> None:
-    st.info("Upload a Portfolio Overview workbook from Controls to start the meeting deck.")
+    st.info("Upload a Portfolio Overview workbook from the sidebar to start the meeting deck.")
     st.write("The app expects workbook sheets named Bridge and/or Term with a Deal Number header row.")
     st.subheader("Status history")
     st.write(
-        "Status history is optional on the first run. After your first meeting, download "
-        "status_history.csv from Exports and upload it next time to enable same-status warnings."
+        "Status history is automatic when the workbook contains the hidden _Status History sheet "
+        "created by the weekly overview generator. A CSV upload remains available in the sidebar only as a backup."
     )
-
 
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -1687,7 +1592,7 @@ def main() -> None:
         return
 
     try:
-        raw_deck, metadata = load_portfolio_workbook(
+        raw_deck, _metadata = load_portfolio_workbook(
             file_bytes=file_bytes,
             as_of_date_iso=st.session_state.as_of_date.isoformat(),
             include_hidden=bool(st.session_state.include_hidden),
@@ -1731,11 +1636,6 @@ def main() -> None:
             as_of_date=st.session_state.as_of_date,
         )
 
-    with st.expander("Source column mapping", expanded=False):
-        if metadata:
-            st.dataframe(pd.DataFrame(metadata).T, use_container_width=True)
-        else:
-            st.write("No source metadata available.")
 
 
 if __name__ == "__main__":
