@@ -1476,8 +1476,34 @@ PRESENTATION_CSS = """
     .rt-kpi-helper {
         margin-top: 0.50rem;
         color: #64748b;
-        font-size: 0.88rem;
-        font-weight: 820;
+        font-size: 0.98rem;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        border-radius: 999px;
+        padding: 0.20rem 0.54rem;
+        background: rgba(100, 116, 139, 0.08);
+    }
+    .rt-signal-green {
+        color: #166534;
+        background: #dcfce7;
+        border: 1px solid rgba(22, 101, 52, 0.18);
+    }
+    .rt-signal-red {
+        color: #991b1b;
+        background: #fee2e2;
+        border: 1px solid rgba(153, 27, 27, 0.18);
+    }
+    .rt-signal-amber {
+        color: #92400e;
+        background: #fef3c7;
+        border: 1px solid rgba(146, 64, 14, 0.18);
+    }
+    .rt-signal-muted {
+        color: #64748b;
+        background: rgba(100, 116, 139, 0.08);
+        border: 1px solid rgba(100, 116, 139, 0.12);
     }
     .rt-panel {
         border: 1px solid rgba(100, 116, 139, 0.16);
@@ -1621,11 +1647,49 @@ def apply_presentation_css() -> None:
     st.markdown(PRESENTATION_CSS, unsafe_allow_html=True)
 
 
-def render_html_kpi_strip(items: List[Tuple[str, object, object]]) -> None:
+def timing_signal(days: object) -> Tuple[str, str]:
+    text_value = fmt_day_delta(days)
+    if text_value == "-":
+        return text_value, "rt-signal-muted"
+
+    try:
+        days_i = int(round(float(days)))
+    except Exception:
+        return text_value, "rt-signal-muted"
+
+    if days_i < 0:
+        return text_value, "rt-signal-red"
+    if days_i == 0:
+        return text_value, "rt-signal-amber"
+    return text_value, "rt-signal-green"
+
+
+def render_html_kpi_strip(items: List[Tuple]) -> None:
+    allowed_helper_classes = {
+        "rt-signal-green",
+        "rt-signal-red",
+        "rt-signal-amber",
+        "rt-signal-muted",
+    }
     cards = []
-    for label, value, helper in items:
+
+    for item in items:
+        if len(item) == 4:
+            label, value, helper, helper_class = item
+        else:
+            label, value, helper = item
+            helper_class = "rt-signal-muted"
+
         helper_text = html_safe(helper, blank="")
-        helper_html = f"<div class='rt-kpi-helper'>{helper_text}</div>" if helper_text else ""
+        helper_class = str(helper_class or "rt-signal-muted")
+        if helper_class not in allowed_helper_classes:
+            helper_class = "rt-signal-muted"
+
+        helper_html = (
+            f"<div class='rt-kpi-helper {helper_class}'>{helper_text}</div>"
+            if helper_text
+            else ""
+        )
         cards.append(
             "<div class='rt-kpi'>"
             f"<div class='rt-kpi-label'>{html_safe(label)}</div>"
@@ -1633,6 +1697,7 @@ def render_html_kpi_strip(items: List[Tuple[str, object, object]]) -> None:
             f"{helper_html}"
             "</div>"
         )
+
     st.markdown(f"<div class='rt-kpi-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
@@ -1818,13 +1883,16 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     render_html_hero(current_row, current_idx, total_count)
 
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
+    maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
+    payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
+
     render_html_kpi_strip(
         [
-            ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance"),
-            ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount"),
-            ("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity"))),
-            ("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment"))),
-            ("Status", display_text(current_row.get("status"), blank="No status"), "Current update"),
+            ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance", "rt-signal-muted"),
+            ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount", "rt-signal-muted"),
+            ("Maturity", fmt_date(current_row.get("maturity_date")), maturity_timing, maturity_signal_class),
+            ("Next Payment", fmt_date(current_row.get("next_payment_date")), payment_timing, payment_signal_class),
+            ("Status", display_text(current_row.get("status"), blank="No status"), "Current update", "rt-signal-muted"),
         ]
     )
 
