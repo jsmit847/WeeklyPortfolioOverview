@@ -1373,12 +1373,12 @@ PRESENTATION_CSS = """
     }
     .rt-hero-title {
         max-width: 980px;
-        font-size: clamp(2.0rem, 3.8vw, 4.0rem);
-        line-height: 0.98;
-        font-weight: 950;
-        margin: 0.65rem 0 0.42rem 0;
+        font-size: clamp(1.45rem, 2.25vw, 2.75rem);
+        line-height: 1.05;
+        font-weight: 940;
+        margin: 0.52rem 0 0.34rem 0;
         color: #111827;
-        letter-spacing: -0.055em;
+        letter-spacing: -0.04em;
         text-wrap: balance;
     }
     .rt-hero-subtitle {
@@ -1446,8 +1446,8 @@ PRESENTATION_CSS = """
         border-radius: 22px;
         background: linear-gradient(180deg, #ffffff, #f8fafc);
         box-shadow: 0 12px 26px rgba(30, 41, 59, 0.07);
-        padding: 0.92rem 0.94rem 0.80rem 0.94rem;
-        min-height: 110px;
+        padding: 1.02rem 1.04rem 0.94rem 1.04rem;
+        min-height: 124px;
     }
     .rt-kpi:before {
         content: "";
@@ -1460,24 +1460,24 @@ PRESENTATION_CSS = """
     }
     .rt-kpi-label {
         color: #64748b;
-        font-size: 0.70rem;
-        font-weight: 920;
+        font-size: 0.82rem;
+        font-weight: 950;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        margin-bottom: 0.32rem;
+        margin-bottom: 0.40rem;
     }
     .rt-kpi-value {
         color: #111827;
-        font-size: clamp(1.04rem, 1.32vw, 1.46rem);
-        font-weight: 950;
-        line-height: 1.04;
+        font-size: clamp(1.34rem, 1.85vw, 2.12rem);
+        font-weight: 960;
+        line-height: 1.02;
         overflow-wrap: anywhere;
     }
     .rt-kpi-helper {
-        margin-top: 0.44rem;
+        margin-top: 0.50rem;
         color: #64748b;
-        font-size: 0.78rem;
-        font-weight: 780;
+        font-size: 0.88rem;
+        font-weight: 820;
     }
     .rt-panel {
         border: 1px solid rgba(100, 116, 139, 0.16);
@@ -1606,26 +1606,6 @@ PRESENTATION_CSS = """
         font-weight: 700;
         line-height: 1.38;
         white-space: pre-wrap;
-    }
-    .rt-mini-banner {
-        border: 1px solid rgba(100, 116, 139, 0.16);
-        border-radius: 22px;
-        background: linear-gradient(135deg, #ffffff, #f5f7fa);
-        padding: 0.82rem 0.9rem;
-        margin-bottom: 0.85rem;
-        box-shadow: 0 10px 22px rgba(30, 41, 59, 0.055);
-    }
-    .rt-mini-banner-title {
-        color: #111827;
-        font-weight: 950;
-        font-size: 0.98rem;
-        margin-bottom: 0.2rem;
-    }
-    .rt-mini-banner-body {
-        color: #475569;
-        font-weight: 700;
-        font-size: 0.86rem;
-        line-height: 1.28;
     }
     @media (max-width: 1100px) {
         .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1869,13 +1849,6 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
     with right:
         render_html_status_check_panel(current_row)
-        st.markdown(
-            "<section class='rt-mini-banner'>"
-            "<div class='rt-mini-banner-title'>Discussion tools</div>"
-            "<div class='rt-mini-banner-body'>Presenter prompts are tucked into the Prompts popover above so the meeting view stays focused.</div>"
-            "</section>",
-            unsafe_allow_html=True,
-        )
         render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
