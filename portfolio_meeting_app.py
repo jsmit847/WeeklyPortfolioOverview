@@ -503,12 +503,12 @@ def build_status_prompt_message(row: pd.Series) -> str:
     if not bool(row.get("status_needs_update_prompt", False)):
         return ""
 
-    status = display_text(row.get("status"), blank="blank")
+    current_update = display_text(row.get("status"), blank="blank")
     count = int(row.get("status_same_meeting_count") or 0)
     since = display_text(row.get("status_same_since"), blank="unknown")
     return (
-        f"Status has been unchanged for {count} meetings since {since}. "
-        f"Confirm whether '{status}' is still accurate or update the status/commentary."
+        f"This deal has carried the same meeting update for {count} meetings since {since}. "
+        f"Confirm whether '{current_update}' still reflects the latest story, or refresh the update/commentary."
     )
 
 
@@ -861,7 +861,7 @@ def build_presenter_prompts(row: pd.Series) -> List[str]:
 
     status_text = display_text(row.get("status"), blank="")
     if bool(row.get("status_needs_update_prompt", False)):
-        prompts.append(str(row.get("status_prompt_message") or "Review whether the status should be updated."))
+        prompts.append(str(row.get("status_prompt_message") or "Review whether the meeting update should be refreshed."))
 
     maturity_text = fmt_date(row.get("maturity_date"))
     payment_text = fmt_date(row.get("next_payment_date"))
@@ -871,9 +871,6 @@ def build_presenter_prompts(row: pd.Series) -> List[str]:
 
     if payment_text != "-":
         prompts.append(f"Confirm next payment timing: {payment_text} ({fmt_day_delta(row.get('days_to_next_payment'))}).")
-
-    if status_text and not bool(row.get("status_needs_update_prompt", False)):
-        prompts.append(f"Check whether status should stay as '{status_text}'.")
 
     commentary_text = display_text(row.get("commentary"), blank="")
     if commentary_text:
@@ -903,7 +900,7 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     queue["Next Payment"] = queue["next_payment_date"].map(fmt_date)
     queue["Status"] = queue["status"].map(display_text)
     queue["Owner"] = queue["owner"].map(display_text)
-    queue["Status Warning"] = queue["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+    queue["Update Reminder"] = queue["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
 
     return queue[
         [
@@ -911,7 +908,7 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "sheet",
             "deal_name",
             "deal_number",
-            "Status Warning",
+            "Update Reminder",
             "Status",
             "Owner",
             "Maturity",
@@ -937,7 +934,7 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     review["Maturity"] = review["maturity_date"].map(fmt_date)
     review["Next Payment"] = review["next_payment_date"].map(fmt_date)
     review["UPB"] = review["upb"].map(lambda x: fmt_money(x, decimals=0))
-    review["Status Update Needed"] = review["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+    review["Update Reminder"] = review["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
     review["Status"] = review["status"].fillna("").astype(str)
     review["Owner"] = review["owner"].fillna("").astype(str)
     review["AM Commentary"] = review["commentary"].fillna("").astype(str)
@@ -951,7 +948,7 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "Maturity",
             "Next Payment",
             "UPB",
-            "Status Update Needed",
+            "Update Reminder",
             "Status",
             "Owner",
             "AM Commentary",
@@ -1021,17 +1018,17 @@ def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.Da
             "owner": "Owner",
             "commentary": "AM Commentary",
             "saved_at": "Last Saved",
-            "status_needs_update_prompt": "Status Update Needed",
+            "status_needs_update_prompt": "Update Reminder",
         }
     )
-    out["Status Update Needed"] = out["Status Update Needed"].map(lambda value: "Yes" if bool(value) else "")
+    out["Update Reminder"] = out["Update Reminder"].map(lambda value: "Yes" if bool(value) else "")
 
     return out[
         [
             "Type",
             "Deal Name",
             "Deal #",
-            "Status Update Needed",
+            "Update Reminder",
             "Status",
             "Owner",
             "AM Commentary",
@@ -1150,7 +1147,7 @@ def render_controls_bar(workbook_name: str) -> None:
         st.divider()
         st.subheader("Filters")
         st.text_input("Search deal # / name / borrower", key="search_query")
-        st.toggle("Status warnings only", key="stale_only")
+        st.toggle("Update reminders only", key="stale_only")
 
         if st.button("Reset filters", use_container_width=True):
             st.session_state.sheet_filter = "All"
@@ -1165,16 +1162,16 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
     warning_count = int(deck["status_needs_update_prompt"].sum()) if "status_needs_update_prompt" in deck.columns else 0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Status history rows", fmt_int(len(history)))
+    c1.metric("History rows", fmt_int(len(history)))
     c2.metric("History source", history_name)
-    c3.metric("Status warnings", fmt_int(warning_count))
+    c3.metric("Update reminders", fmt_int(warning_count))
 
     if st.session_state.get("status_history_load_error"):
         st.error(f"Could not load status history: {st.session_state.status_history_load_error}")
 
     if history.empty:
         st.info(
-            "No embedded status history is loaded yet. The app will still run; status warnings begin once "
+            "No embedded status history is loaded yet. The app will still run; update reminders begin once "
             "you use a workbook generated by the weekly overview builder with the hidden history sheet."
         )
 
@@ -1190,13 +1187,13 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     m2.metric("Total UPB", fmt_money(total_upb, decimals=0))
     m3.metric("Bridge / Term", f"{fmt_int(bridge_count)} / {fmt_int(term_count)}")
     m4.metric("Maturing in 30d", fmt_int(next_30), as_of_date.strftime("%m/%d/%Y"))
-    m5.metric("Status warnings", fmt_int(stale_count))
+    m5.metric("Update reminders", fmt_int(stale_count))
 
     render_status_history_notice(deck)
 
     if stale_count:
         stale = deck[deck["status_needs_update_prompt"] == True].copy()  # noqa: E712
-        st.warning(f"{stale_count} deal(s) need a status check before the meeting is closed.")
+        st.warning(f"{stale_count} deal(s) have an update reminder before the meeting is closed.")
         st.dataframe(
             stale[[
                 "sheet",
@@ -1219,7 +1216,7 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
 
     st.info(
         "Overview stays in original workbook order. Use Presentation for meeting discussion "
-        "and Review for controlled status/commentary edits."
+        "and Review for controlled update/commentary edits."
     )
 
     left, right = st.columns([1.15, 0.85], gap="large")
@@ -1274,7 +1271,7 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
         )
 
         if bool(current_row_local.get("status_needs_update_prompt", False)):
-            st.warning(str(current_row_local.get("status_prompt_message") or "Status review needed."))
+            st.warning(str(current_row_local.get("status_prompt_message") or "Update reminder."))
 
         with st.form(f"edit-form::{deal_key}"):
             c1, c2 = st.columns(2)
@@ -1331,24 +1328,24 @@ PRESENTATION_CSS = """
     .rt-hero {
         position: relative;
         overflow: hidden;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        border-radius: 30px;
-        padding: 1.35rem 1.45rem;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 28px;
+        padding: 1.28rem 1.38rem;
         background:
-            radial-gradient(circle at 8% 18%, rgba(56, 189, 248, 0.40), transparent 23%),
-            radial-gradient(circle at 92% 18%, rgba(168, 85, 247, 0.28), transparent 24%),
-            linear-gradient(135deg, #0f172a 0%, #1e293b 54%, #0f766e 135%);
-        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.20);
-        margin: 0.72rem 0 0.95rem 0;
+            radial-gradient(circle at 8% 14%, rgba(125, 159, 190, 0.18), transparent 28%),
+            radial-gradient(circle at 96% 5%, rgba(196, 181, 253, 0.16), transparent 24%),
+            linear-gradient(135deg, #ffffff 0%, #f7f9fc 48%, #eef4f8 100%);
+        box-shadow: 0 18px 48px rgba(30, 41, 59, 0.10);
+        margin: 0.70rem 0 0.88rem 0;
     }
     .rt-hero:after {
         content: "";
         position: absolute;
         inset: 0;
         background-image:
-            linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px);
-        background-size: 38px 38px;
+            linear-gradient(rgba(100, 116, 139, 0.045) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(100, 116, 139, 0.045) 1px, transparent 1px);
+        background-size: 42px 42px;
         mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
         pointer-events: none;
     }
@@ -1365,30 +1362,29 @@ PRESENTATION_CSS = """
         align-items: center;
         gap: 0.45rem;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.13);
-        color: rgba(255,255,255,0.92);
-        border: 1px solid rgba(255,255,255,0.22);
+        background: rgba(71, 85, 105, 0.08);
+        color: #475569;
+        border: 1px solid rgba(100, 116, 139, 0.16);
         padding: 0.34rem 0.72rem;
         font-size: 0.72rem;
         font-weight: 900;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        backdrop-filter: blur(10px);
     }
     .rt-hero-title {
         max-width: 980px;
-        font-size: clamp(2.0rem, 4.0vw, 4.25rem);
-        line-height: 0.96;
+        font-size: clamp(2.0rem, 3.8vw, 4.0rem);
+        line-height: 0.98;
         font-weight: 950;
         margin: 0.65rem 0 0.42rem 0;
-        color: #ffffff;
-        letter-spacing: -0.06em;
+        color: #111827;
+        letter-spacing: -0.055em;
         text-wrap: balance;
     }
     .rt-hero-subtitle {
-        font-size: 1.03rem;
-        color: rgba(226, 232, 240, 0.92);
-        font-weight: 700;
+        font-size: 1.02rem;
+        color: #475569;
+        font-weight: 720;
         line-height: 1.36;
         margin-bottom: 0.9rem;
     }
@@ -1398,64 +1394,60 @@ PRESENTATION_CSS = """
         gap: 0.45rem;
     }
     .rt-chip {
-        border: 1px solid rgba(255, 255, 255, 0.22);
-        background: rgba(255, 255, 255, 0.12);
-        color: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(100, 116, 139, 0.16);
+        background: rgba(255, 255, 255, 0.72);
+        color: #334155;
         border-radius: 999px;
         padding: 0.38rem 0.68rem;
         font-size: 0.82rem;
-        font-weight: 800;
-        backdrop-filter: blur(10px);
+        font-weight: 820;
     }
     .rt-status-pill {
         border-radius: 22px;
         padding: 0.78rem 0.9rem;
         min-width: 190px;
         text-align: right;
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        background: rgba(255, 255, 255, 0.14);
-        box-shadow: 0 18px 35px rgba(15, 23, 42, 0.18);
-        backdrop-filter: blur(12px);
+        border: 1px solid rgba(100, 116, 139, 0.18);
+        background: rgba(255, 255, 255, 0.76);
+        box-shadow: 0 12px 24px rgba(30, 41, 59, 0.08);
     }
     .rt-status-pill .rt-label {
         font-size: 0.68rem;
         letter-spacing: 0.09em;
         text-transform: uppercase;
-        color: rgba(226, 232, 240, 0.82);
-        font-weight: 950;
+        color: #64748b;
+        font-weight: 920;
     }
     .rt-status-pill .rt-value {
         margin-top: 0.18rem;
-        font-size: 1.13rem;
-        font-weight: 950;
-        color: #ffffff;
+        font-size: 1.11rem;
+        font-weight: 930;
+        color: #111827;
         overflow-wrap: anywhere;
     }
     .rt-status-warning {
-        background: rgba(251, 146, 60, 0.20);
-        border-color: rgba(253, 186, 116, 0.52);
+        background: rgba(255, 251, 235, 0.88);
+        border-color: rgba(217, 119, 6, 0.28);
     }
     .rt-status-ok {
-        background: rgba(34, 197, 94, 0.18);
-        border-color: rgba(134, 239, 172, 0.46);
+        background: rgba(255, 255, 255, 0.76);
+        border-color: rgba(100, 116, 139, 0.18);
     }
     .rt-kpi-grid {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.78rem;
-        margin: 0.5rem 0 1.0rem 0;
+        gap: 0.74rem;
+        margin: 0.5rem 0 0.95rem 0;
     }
     .rt-kpi {
         position: relative;
         overflow: hidden;
-        border: 1px solid rgba(15, 23, 42, 0.10);
+        border: 1px solid rgba(100, 116, 139, 0.16);
         border-radius: 22px;
-        background:
-            radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 32%),
-            linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
-        padding: 0.95rem 0.95rem 0.82rem 0.95rem;
-        min-height: 116px;
+        background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 12px 26px rgba(30, 41, 59, 0.07);
+        padding: 0.92rem 0.94rem 0.80rem 0.94rem;
+        min-height: 110px;
     }
     .rt-kpi:before {
         content: "";
@@ -1463,37 +1455,35 @@ PRESENTATION_CSS = """
         top: 0;
         left: 0;
         right: 0;
-        height: 5px;
-        background: linear-gradient(90deg, #0ea5e9, #6366f1, #14b8a6);
+        height: 4px;
+        background: linear-gradient(90deg, #8aa4b8, #b7c6d5, #d8e0e7);
     }
     .rt-kpi-label {
-        color: rgba(15, 23, 42, 0.56);
+        color: #64748b;
         font-size: 0.70rem;
-        font-weight: 950;
+        font-weight: 920;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         margin-bottom: 0.32rem;
     }
     .rt-kpi-value {
-        color: #0f172a;
-        font-size: clamp(1.06rem, 1.42vw, 1.55rem);
+        color: #111827;
+        font-size: clamp(1.04rem, 1.32vw, 1.46rem);
         font-weight: 950;
-        line-height: 1.02;
+        line-height: 1.04;
         overflow-wrap: anywhere;
     }
     .rt-kpi-helper {
         margin-top: 0.44rem;
-        color: rgba(15, 23, 42, 0.55);
+        color: #64748b;
         font-size: 0.78rem;
-        font-weight: 800;
+        font-weight: 780;
     }
     .rt-panel {
-        border: 1px solid rgba(15, 23, 42, 0.10);
+        border: 1px solid rgba(100, 116, 139, 0.16);
         border-radius: 26px;
-        background:
-            radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 26%),
-            linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 18px 38px rgba(15, 23, 42, 0.075);
+        background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 14px 30px rgba(30, 41, 59, 0.065);
         padding: 1.02rem 1.05rem;
         margin-bottom: 0.85rem;
     }
@@ -1504,21 +1494,21 @@ PRESENTATION_CSS = """
         gap: 0.75rem;
         margin-bottom: 0.82rem;
         padding-bottom: 0.68rem;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+        border-bottom: 1px solid rgba(100, 116, 139, 0.14);
     }
     .rt-panel-title {
         font-size: 1.14rem;
         font-weight: 950;
-        color: #0f172a;
-        letter-spacing: -0.03em;
+        color: #111827;
+        letter-spacing: -0.025em;
     }
     .rt-panel-note {
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.07);
+        background: rgba(100, 116, 139, 0.09);
         padding: 0.28rem 0.6rem;
-        color: rgba(15, 23, 42, 0.68);
+        color: #475569;
         font-size: 0.75rem;
-        font-weight: 900;
+        font-weight: 850;
     }
     .rt-field-grid {
         display: grid;
@@ -1527,15 +1517,15 @@ PRESENTATION_CSS = """
     }
     .rt-field {
         border-radius: 18px;
-        background: rgba(241, 245, 249, 0.80);
-        border: 1px solid rgba(15, 23, 42, 0.065);
+        background: rgba(241, 245, 249, 0.72);
+        border: 1px solid rgba(100, 116, 139, 0.12);
         padding: 0.72rem 0.76rem;
         min-height: 78px;
     }
     .rt-field-label {
         font-size: 0.68rem;
-        color: rgba(15, 23, 42, 0.54);
-        font-weight: 950;
+        color: #64748b;
+        font-weight: 920;
         text-transform: uppercase;
         letter-spacing: 0.07em;
         margin-bottom: 0.24rem;
@@ -1543,100 +1533,96 @@ PRESENTATION_CSS = """
     .rt-field-value {
         font-size: 1.04rem;
         font-weight: 950;
-        color: #0f172a;
+        color: #111827;
         line-height: 1.14;
         overflow-wrap: anywhere;
     }
     .rt-status-card {
-        border-radius: 26px;
-        padding: 1.05rem 1.08rem;
+        border-radius: 24px;
+        padding: 0.98rem 1.02rem;
         margin-bottom: 0.85rem;
-        border: 1px solid rgba(15, 23, 42, 0.10);
-        box-shadow: 0 18px 38px rgba(15, 23, 42, 0.075);
+        border: 1px solid rgba(217, 119, 6, 0.22);
+        background: linear-gradient(135deg, #fffbeb, #ffffff);
+        box-shadow: 0 12px 26px rgba(30, 41, 59, 0.055);
     }
     .rt-status-card-warning {
-        background:
-            radial-gradient(circle at top right, rgba(251, 146, 60, 0.18), transparent 30%),
-            linear-gradient(135deg, #fff7ed, #fffbeb);
-        border-color: rgba(234, 88, 12, 0.28);
+        background: linear-gradient(135deg, #fffbeb, #ffffff);
     }
     .rt-status-card-ok {
-        background:
-            radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 30%),
-            linear-gradient(135deg, #f0fdf4, #ecfeff);
-        border-color: rgba(22, 163, 74, 0.22);
+        background: linear-gradient(135deg, #ffffff, #f8fafc);
+        border-color: rgba(100, 116, 139, 0.14);
     }
     .rt-status-card-title {
-        font-size: 1.08rem;
+        font-size: 1.04rem;
         font-weight: 950;
-        color: #0f172a;
-        margin-bottom: 0.32rem;
+        color: #111827;
+        margin-bottom: 0.30rem;
     }
     .rt-status-card-body {
-        color: rgba(15, 23, 42, 0.76);
-        font-size: 0.94rem;
+        color: #475569;
+        font-size: 0.93rem;
         font-weight: 700;
         line-height: 1.38;
     }
     .rt-prompt-list {
         display: flex;
         flex-direction: column;
-        gap: 0.58rem;
+        gap: 0.56rem;
     }
     .rt-prompt {
         display: grid;
-        grid-template-columns: 36px minmax(0, 1fr);
-        gap: 0.66rem;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 0.64rem;
         border-radius: 18px;
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        background: rgba(248, 250, 252, 0.92);
-        padding: 0.74rem 0.76rem;
+        border: 1px solid rgba(100, 116, 139, 0.14);
+        background: rgba(248, 250, 252, 0.96);
+        padding: 0.72rem 0.74rem;
     }
     .rt-prompt-num {
-        width: 34px;
-        height: 34px;
+        width: 32px;
+        height: 32px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         border-radius: 12px;
-        background: linear-gradient(135deg, #0ea5e9, #6366f1);
-        color: #ffffff;
+        background: #dbe6ee;
+        color: #334155;
         font-weight: 950;
-        font-size: 0.92rem;
+        font-size: 0.90rem;
     }
     .rt-prompt-text {
-        color: rgba(15, 23, 42, 0.86);
-        font-weight: 800;
+        color: #334155;
+        font-weight: 760;
         line-height: 1.30;
         font-size: 0.95rem;
     }
     .rt-commentary {
         border-radius: 20px;
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(100, 116, 139, 0.14);
+        background: rgba(255, 255, 255, 0.90);
         padding: 0.88rem 0.92rem;
-        color: rgba(15, 23, 42, 0.86);
+        color: #334155;
         font-size: 0.96rem;
         font-weight: 700;
         line-height: 1.38;
         white-space: pre-wrap;
     }
     .rt-mini-banner {
-        border: 1px solid rgba(15, 23, 42, 0.10);
+        border: 1px solid rgba(100, 116, 139, 0.16);
         border-radius: 22px;
-        background: linear-gradient(135deg, #f8fafc, #eef2ff);
+        background: linear-gradient(135deg, #ffffff, #f5f7fa);
         padding: 0.82rem 0.9rem;
         margin-bottom: 0.85rem;
-        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.065);
+        box-shadow: 0 10px 22px rgba(30, 41, 59, 0.055);
     }
     .rt-mini-banner-title {
-        color: #0f172a;
+        color: #111827;
         font-weight: 950;
         font-size: 0.98rem;
         margin-bottom: 0.2rem;
     }
     .rt-mini-banner-body {
-        color: rgba(15, 23, 42, 0.66);
+        color: #475569;
         font-weight: 700;
         font-size: 0.86rem;
         line-height: 1.28;
@@ -1736,19 +1722,13 @@ def render_agenda_jump(deck: pd.DataFrame, current_idx: int) -> None:
 
 
 def render_html_status_check_panel(current_row: pd.Series) -> None:
-    status_text = display_text(current_row.get("status"), blank="No status")
-    if bool(current_row.get("status_needs_update_prompt", False)):
-        title = "Status check needed"
-        body = str(current_row.get("status_prompt_message") or "Status review needed.")
-        card_class = "rt-status-card-warning"
-    else:
-        title = "Status check clear"
-        body = f"Current status: {status_text}. Keep it as-is or use Edit status if the story changed."
-        card_class = "rt-status-card-ok"
+    if not bool(current_row.get("status_needs_update_prompt", False)):
+        return
 
+    body = str(current_row.get("status_prompt_message") or "Review whether the meeting update should be refreshed.")
     st.markdown(
-        f"<section class='rt-status-card {card_class}'>"
-        f"<div class='rt-status-card-title'>{html_safe(title)}</div>"
+        "<section class='rt-status-card rt-status-card-warning'>"
+        "<div class='rt-status-card-title'>Update reminder</div>"
         f"<div class='rt-status-card-body'>{html_safe(body)}</div>"
         "</section>",
         unsafe_allow_html=True,
@@ -1797,7 +1777,7 @@ def render_html_hero(current_row: pd.Series, current_idx: int, total_count: int)
         "</div>"
         "</div>"
         f"<div class='rt-status-pill {status_class}'>"
-        "<div class='rt-label'>Current Status</div>"
+        "<div class='rt-label'>Current update</div>"
         f"<div class='rt-value'>{html_safe(current_row.get('status'), blank='No status')}</div>"
         "</div>"
         "</div>"
@@ -1864,7 +1844,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount"),
             ("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity"))),
             ("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment"))),
-            ("Status", display_text(current_row.get("status"), blank="No status"), "Current meeting status"),
+            ("Status", display_text(current_row.get("status"), blank="No status"), "Current update"),
         ]
     )
 
@@ -1892,7 +1872,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
         st.markdown(
             "<section class='rt-mini-banner'>"
             "<div class='rt-mini-banner-title'>Discussion tools</div>"
-            "<div class='rt-mini-banner-body'>Presenter prompts are tucked into the Prompts popover above so they do not crowd the meeting view.</div>"
+            "<div class='rt-mini-banner-body'>Presenter prompts are tucked into the Prompts popover above so the meeting view stays focused.</div>"
             "</section>",
             unsafe_allow_html=True,
         )
@@ -1904,7 +1884,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             agenda_slice = deck.iloc[start:end].copy()
             agenda_slice.insert(0, "Agenda #", range(start + 1, end + 1))
             agenda_slice["Current"] = agenda_slice["deal_key"].map(lambda value: "Current" if value == deal_key else "")
-            agenda_slice["Status Warning"] = agenda_slice["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+            agenda_slice["Update Reminder"] = agenda_slice["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
             agenda_slice["UPB"] = agenda_slice["upb"].map(lambda value: fmt_money(value, decimals=0))
             st.dataframe(
                 agenda_slice[
@@ -1914,7 +1894,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
                         "sheet",
                         "deal_name",
                         "deal_number",
-                        "Status Warning",
+                        "Update Reminder",
                         "status",
                         "owner",
                         "UPB",
@@ -1950,7 +1930,7 @@ def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
             "Maturity",
             "Next Payment",
             "UPB",
-            "Status Update Needed",
+            "Update Reminder",
         ],
         column_config={
             "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
