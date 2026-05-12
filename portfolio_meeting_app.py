@@ -1304,6 +1304,7 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
 
 
 
+
 def markdown_safe(value: object, blank: str = "-") -> str:
     text_value = display_text(value, blank=blank)
     return (
@@ -1314,6 +1315,7 @@ def markdown_safe(value: object, blank: str = "-") -> str:
         .replace("`", "\\`")
         .replace("$", "\\$")
     )
+
 
 def value_is_blank(value: object) -> bool:
     if value is None:
@@ -1330,31 +1332,91 @@ def first_nonblank_value(*values: object) -> object:
     return None
 
 
-def render_kpi_strip(items: List[Tuple[str, object]]) -> None:
+def render_stat_tile(label: str, value: object, helper: object = "") -> None:
+    with st.container(border=True):
+        st.caption(label)
+        st.markdown(f"#### **{markdown_safe(value)}**")
+        helper_text = display_text(helper, blank="")
+        if helper_text:
+            st.caption(helper_text)
+
+
+def render_kpi_strip(items: List[Tuple[str, object, object]]) -> None:
     cols = st.columns(len(items), gap="medium")
-    for col, (label, value) in zip(cols, items):
+    for col, (label, value, helper) in zip(cols, items):
         with col:
-            st.caption(label)
-            st.markdown(f"### **{markdown_safe(value)}**")
+            render_stat_tile(label, value, helper)
 
 
-def render_detail_grid(items: List[Tuple[str, object]], columns: int = 2) -> None:
+def render_detail_matrix(items: List[Tuple[str, object]], columns: int = 2) -> None:
     for start in range(0, len(items), columns):
         row_items = items[start : start + columns]
-        cols = st.columns(len(row_items), gap="large")
+        cols = st.columns(len(row_items), gap="medium")
         for col, (label, value) in zip(cols, row_items):
             with col:
-                st.caption(label)
-                st.markdown(f"**{markdown_safe(value)}**")
+                with st.container(border=True):
+                    st.caption(label)
+                    st.markdown(f"**{markdown_safe(value)}**")
 
 
 def render_prompt_list(prompts: List[str]) -> None:
     for i, prompt in enumerate(prompts, start=1):
-        left, right = st.columns([0.08, 0.92], vertical_alignment="top")
-        with left:
-            st.markdown(f"**{i}.**")
-        with right:
-            st.write(prompt)
+        with st.container(border=True):
+            left, right = st.columns([0.12, 0.88], vertical_alignment="top")
+            with left:
+                st.markdown(f"### {i}")
+            with right:
+                st.write(prompt)
+
+
+def render_agenda_jump(deck: pd.DataFrame, current_idx: int) -> None:
+    option_labels = [
+        f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}"
+        for i, row in enumerate(
+            deck[["sheet", "deal_name", "deal_number"]].itertuples(index=False, name="DealRow")
+        )
+    ]
+    selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx)
+    selected_idx = option_labels.index(selected_label)
+    if selected_idx != current_idx:
+        st.session_state.selected_deal_key = deck.iloc[selected_idx]["deal_key"]
+        st.rerun()
+
+
+def render_status_check_panel(current_row: pd.Series) -> None:
+    status_text = display_text(current_row.get("status"), blank="No status")
+    if bool(current_row.get("status_needs_update_prompt", False)):
+        with st.status("Status check needed", state="error", expanded=True):
+            st.write(str(current_row.get("status_prompt_message") or "Status review needed."))
+            st.write("Use **Edit status** before closing the discussion for this deal.")
+    else:
+        with st.status("Status check clear", state="complete", expanded=False):
+            st.write(f"Current status: **{markdown_safe(status_text)}**")
+
+
+def build_capital_items(current_row: pd.Series) -> List[Tuple[str, object]]:
+    if current_row.get("sheet") == "Bridge":
+        return [
+            ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
+            ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
+            ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
+            ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
+            ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
+            ("Next Payment Date", fmt_date(current_row.get("next_payment_date"))),
+            ("Financing", current_row.get("financing")),
+            ("Loan Buyer", current_row.get("loan_buyer")),
+        ]
+
+    return [
+        ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
+        ("Funded Amount", fmt_money(first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount")), decimals=0)),
+        ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
+        ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
+        ("Next Payment Date", fmt_date(current_row.get("next_payment_date"))),
+        ("Financing", current_row.get("financing")),
+        ("Loan Buyer", current_row.get("loan_buyer")),
+        ("Segment", current_row.get("segment")),
+    ]
 
 
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
@@ -1362,138 +1424,113 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     current_row = get_selected_row(deck)
     current_idx = int(deck.index[deck["deal_key"] == current_row["deal_key"]][0])
     total_count = len(deck)
-    progress_value = 0.0 if total_count <= 1 else current_idx / max(total_count - 1, 1)
+    progress_value = 0.0 if total_count <= 1 else (current_idx + 1) / total_count
     deal_key = str(current_row.get("deal_key"))
 
-    st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
-
-    nav_left, nav_mid, nav_filter, nav_jump, nav_edit = st.columns(
-        [0.75, 0.75, 1.1, 2.6, 1.0],
-        vertical_alignment="bottom",
-    )
-    with nav_left:
-        st.button(
-            "Previous",
-            use_container_width=True,
-            disabled=current_idx == 0,
-            on_click=move_selection,
-            args=(deck, -1),
+    with st.container(border=True):
+        top_left, top_mid, top_filter, top_jump, top_edit = st.columns(
+            [0.75, 0.75, 1.2, 2.8, 1.0],
+            vertical_alignment="bottom",
         )
-    with nav_mid:
-        st.button(
-            "Next",
-            use_container_width=True,
-            disabled=current_idx >= total_count - 1,
-            on_click=move_selection,
-            args=(deck, 1),
-        )
-    with nav_filter:
-        st.segmented_control(
-            "Portfolio type",
-            options=["All", "Bridge", "Term"],
-            key="sheet_filter",
-            width="stretch",
-        )
-    with nav_jump:
-        option_labels = [
-            f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}"
-            for i, row in enumerate(
-                deck[["sheet", "deal_name", "deal_number"]].itertuples(index=False, name="DealRow")
+        with top_left:
+            st.button(
+                "Previous",
+                use_container_width=True,
+                disabled=current_idx == 0,
+                on_click=move_selection,
+                args=(deck, -1),
             )
-        ]
-        selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx)
-        selected_idx = option_labels.index(selected_label)
-        if selected_idx != current_idx:
-            st.session_state.selected_deal_key = deck.iloc[selected_idx]["deal_key"]
-            st.rerun()
-    with nav_edit:
-        if st.button("Edit status", type="primary", use_container_width=True):
-            st.session_state.dialog_target = deal_key
-            st.rerun()
+        with top_mid:
+            st.button(
+                "Next",
+                use_container_width=True,
+                disabled=current_idx >= total_count - 1,
+                on_click=move_selection,
+                args=(deck, 1),
+            )
+        with top_filter:
+            st.segmented_control(
+                "Portfolio type",
+                options=["All", "Bridge", "Term"],
+                key="sheet_filter",
+                width="stretch",
+            )
+        with top_jump:
+            render_agenda_jump(deck, current_idx)
+        with top_edit:
+            if st.button("Edit status", type="primary", use_container_width=True):
+                st.session_state.dialog_target = deal_key
+                st.rerun()
 
-    st.divider()
+        st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
 
-    title_left, status_right = st.columns([1.6, 1.0], gap="large", vertical_alignment="top")
-    with title_left:
-        st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
-        st.title(display_text(current_row.get("deal_name")))
-        st.write(
-            f"Borrower: **{markdown_safe(current_row.get('borrower'))}**  |  "
-            f"Owner: **{markdown_safe(current_row.get('owner'))}**"
-        )
-    with status_right:
-        if bool(current_row.get("status_needs_update_prompt", False)):
-            st.warning(str(current_row.get("status_prompt_message") or "Status review needed."))
-        else:
-            st.success("Status check clear for this deal.")
+    hero_left, hero_right = st.columns([1.65, 0.95], gap="large", vertical_alignment="top")
+    with hero_left:
+        with st.container(border=True):
+            st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
+            st.title(display_text(current_row.get("deal_name")))
+            st.write(
+                f"Borrower: **{markdown_safe(current_row.get('borrower'))}**  |  "
+                f"Owner: **{markdown_safe(current_row.get('owner'))}**  |  "
+                f"Servicer: **{markdown_safe(current_row.get('servicer'))}**"
+            )
+            st.caption(
+                f"Portfolio: {display_text(current_row.get('portfolio'))} | "
+                f"Segment: {display_text(current_row.get('segment'))} | "
+                f"Account: {display_text(current_row.get('account_display'))}"
+            )
+    with hero_right:
+        render_status_check_panel(current_row)
 
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
     render_kpi_strip(
         [
-            ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-            ("Funded Amount", fmt_money(funded_kpi_value, decimals=0)),
-            ("Maturity", f"{fmt_date(current_row.get('maturity_date'))} | {fmt_day_delta(current_row.get('days_to_maturity'))}"),
-            ("Next Payment", f"{fmt_date(current_row.get('next_payment_date'))} | {fmt_day_delta(current_row.get('days_to_next_payment'))}"),
-            ("Status", display_text(current_row.get("status"))),
+            ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance"),
+            ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount"),
+            ("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity"))),
+            ("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment"))),
+            ("Status", display_text(current_row.get("status")), "Current meeting status"),
         ]
     )
 
-    st.divider()
+    st.write("")
 
-    detail_left, detail_right = st.columns([1.05, 0.95], gap="large")
+    main_left, main_right = st.columns([1.15, 0.85], gap="large", vertical_alignment="top")
 
-    with detail_left:
-        st.subheader("Deal snapshot")
-        render_detail_grid(
-            [
-                ("Borrower", current_row.get("borrower")),
-                ("Account", current_row.get("account_display")),
-                ("Deal #", current_row.get("deal_number")),
-                ("Servicer", current_row.get("servicer")),
-                ("Portfolio", current_row.get("portfolio")),
-                ("Segment", current_row.get("segment")),
-                ("Owner", current_row.get("owner")),
-                ("Days Past Due", fmt_int(current_row.get("days_past_due"))),
-                ("NPL / Delinquency", current_row.get("npl_raw")),
-            ],
-            columns=3,
-        )
+    with main_left:
+        with st.container(border=True):
+            heading_left, heading_right = st.columns([0.68, 0.32], vertical_alignment="center")
+            with heading_left:
+                st.subheader("Deal snapshot")
+            with heading_right:
+                st.caption(f"Days Past Due: {fmt_int(current_row.get('days_past_due'))}")
+            render_detail_matrix(
+                [
+                    ("Borrower", current_row.get("borrower")),
+                    ("Account", current_row.get("account_display")),
+                    ("Deal #", current_row.get("deal_number")),
+                    ("Servicer", current_row.get("servicer")),
+                    ("Portfolio", current_row.get("portfolio")),
+                    ("Segment", current_row.get("segment")),
+                    ("Owner", current_row.get("owner")),
+                    ("NPL / Delinquency", current_row.get("npl_raw")),
+                ],
+                columns=2,
+            )
 
-    with detail_right:
-        st.subheader("Capital profile")
-        if current_row.get("sheet") == "Bridge":
-            capital_items = [
-                ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-                ("Funded Amount", fmt_money(current_row.get("funded_amount"), decimals=0)),
-                ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
-                ("Remaining Commitment", fmt_money(current_row.get("remaining_commitment"), decimals=0)),
-                ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
-                ("Next Payment Date", fmt_date(current_row.get("next_payment_date"))),
-                ("Financing", current_row.get("financing")),
-                ("Loan Buyer", current_row.get("loan_buyer")),
-            ]
-        else:
-            capital_items = [
-                ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-                ("Funded Amount", fmt_money(first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount")), decimals=0)),
-                ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
-                ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
-                ("Next Payment Date", fmt_date(current_row.get("next_payment_date"))),
-                ("Financing", current_row.get("financing")),
-                ("Loan Buyer", current_row.get("loan_buyer")),
-                ("Segment", current_row.get("segment")),
-            ]
-        render_detail_grid(capital_items, columns=2)
+        with st.container(border=True):
+            st.subheader("Capital profile")
+            render_detail_matrix(build_capital_items(current_row), columns=2)
 
-    st.divider()
+    with main_right:
+        with st.container(border=True):
+            st.subheader("Presenter prompts")
+            render_prompt_list(build_presenter_prompts(current_row))
 
-    prompt_left, agenda_right = st.columns([1.15, 0.85], gap="large")
-    with prompt_left:
-        st.subheader("Presenter prompts")
-        render_prompt_list(build_presenter_prompts(current_row))
-        st.caption("Use Edit status to update status, owner, or commentary.")
+        with st.expander("AM commentary", expanded=True):
+            commentary = display_text(current_row.get("commentary"), blank="No commentary entered.")
+            st.write(commentary)
 
-    with agenda_right:
         with st.expander("Nearby agenda", expanded=False):
             start = max(current_idx - 3, 0)
             end = min(current_idx + 4, total_count)
