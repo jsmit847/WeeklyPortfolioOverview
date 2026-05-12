@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
 import io
 import re
 from pathlib import Path
@@ -1305,16 +1306,9 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
 
 
 
-def markdown_safe(value: object, blank: str = "-") -> str:
-    text_value = display_text(value, blank=blank)
-    return (
-        text_value
-        .replace("\\", "\\\\")
-        .replace("*", "\\*")
-        .replace("_", "\\_")
-        .replace("`", "\\`")
-        .replace("$", "\\$")
-    )
+
+def html_safe(value: object, blank: str = "-") -> str:
+    return html.escape(display_text(value, blank=blank), quote=True)
 
 
 def value_is_blank(value: object) -> bool:
@@ -1332,41 +1326,350 @@ def first_nonblank_value(*values: object) -> object:
     return None
 
 
-def render_stat_tile(label: str, value: object, helper: object = "") -> None:
-    with st.container(border=True):
-        st.caption(label)
-        st.markdown(f"#### **{markdown_safe(value)}**")
-        helper_text = display_text(helper, blank="")
-        if helper_text:
-            st.caption(helper_text)
+PRESENTATION_CSS = """
+<style>
+    .rt-stage {
+        margin-top: 0.2rem;
+    }
+    .rt-hero {
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        border-radius: 26px;
+        padding: 1.15rem 1.25rem;
+        background:
+            radial-gradient(circle at top left, rgba(99, 102, 241, 0.22), transparent 30%),
+            radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.18), transparent 34%),
+            linear-gradient(135deg, #ffffff 0%, #f8fafc 48%, #eef2ff 100%);
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        margin: 0.75rem 0 0.85rem 0;
+    }
+    .rt-hero-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+    .rt-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.08);
+        color: #0f172a;
+        padding: 0.28rem 0.68rem;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+    }
+    .rt-hero-title {
+        font-size: clamp(1.75rem, 3.2vw, 3.1rem);
+        line-height: 1.02;
+        font-weight: 900;
+        margin: 0.58rem 0 0.38rem 0;
+        color: #0f172a;
+        letter-spacing: -0.045em;
+    }
+    .rt-hero-subtitle {
+        font-size: 1.02rem;
+        color: rgba(15, 23, 42, 0.76);
+        font-weight: 650;
+        line-height: 1.35;
+        margin-bottom: 0.85rem;
+    }
+    .rt-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.42rem;
+    }
+    .rt-chip {
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        background: rgba(255, 255, 255, 0.76);
+        border-radius: 999px;
+        padding: 0.36rem 0.64rem;
+        font-size: 0.82rem;
+        color: rgba(15, 23, 42, 0.82);
+        font-weight: 750;
+    }
+    .rt-status-pill {
+        border-radius: 18px;
+        padding: 0.68rem 0.82rem;
+        min-width: 170px;
+        text-align: right;
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        background: rgba(255, 255, 255, 0.72);
+    }
+    .rt-status-pill .rt-label {
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(15, 23, 42, 0.54);
+        font-weight: 900;
+    }
+    .rt-status-pill .rt-value {
+        margin-top: 0.14rem;
+        font-size: 1.02rem;
+        font-weight: 900;
+        color: #0f172a;
+    }
+    .rt-status-warning {
+        background: linear-gradient(135deg, #fff7ed, #ffedd5);
+        border-color: rgba(234, 88, 12, 0.26);
+    }
+    .rt-status-ok {
+        background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+        border-color: rgba(22, 163, 74, 0.23);
+    }
+    .rt-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0.45rem 0 0.95rem 0;
+    }
+    .rt-kpi {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        border-radius: 20px;
+        background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.055);
+        padding: 0.88rem 0.88rem 0.76rem 0.88rem;
+        min-height: 108px;
+    }
+    .rt-kpi:before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 5px;
+        background: linear-gradient(180deg, #4f46e5, #06b6d4);
+        opacity: 0.85;
+    }
+    .rt-kpi-label {
+        color: rgba(15, 23, 42, 0.58);
+        font-size: 0.72rem;
+        font-weight: 900;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 0.28rem;
+    }
+    .rt-kpi-value {
+        color: #0f172a;
+        font-size: clamp(1.02rem, 1.35vw, 1.45rem);
+        font-weight: 950;
+        line-height: 1.06;
+        overflow-wrap: anywhere;
+    }
+    .rt-kpi-helper {
+        margin-top: 0.38rem;
+        color: rgba(15, 23, 42, 0.58);
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+    .rt-panel {
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        border-radius: 24px;
+        background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+        padding: 1rem 1.05rem;
+        margin-bottom: 0.82rem;
+    }
+    .rt-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.65rem;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .rt-panel-title {
+        font-size: 1.05rem;
+        font-weight: 950;
+        color: #0f172a;
+        letter-spacing: -0.02em;
+    }
+    .rt-panel-note {
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.07);
+        padding: 0.24rem 0.56rem;
+        color: rgba(15, 23, 42, 0.68);
+        font-size: 0.74rem;
+        font-weight: 850;
+    }
+    .rt-field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.68rem;
+    }
+    .rt-field {
+        border-radius: 16px;
+        background: rgba(241, 245, 249, 0.76);
+        border: 1px solid rgba(15, 23, 42, 0.06);
+        padding: 0.68rem 0.72rem;
+        min-height: 74px;
+    }
+    .rt-field-label {
+        font-size: 0.68rem;
+        color: rgba(15, 23, 42, 0.54);
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.22rem;
+    }
+    .rt-field-value {
+        font-size: 1rem;
+        font-weight: 900;
+        color: #0f172a;
+        line-height: 1.16;
+        overflow-wrap: anywhere;
+    }
+    .rt-status-card {
+        border-radius: 24px;
+        padding: 1rem 1.05rem;
+        margin-bottom: 0.82rem;
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+    }
+    .rt-status-card-warning {
+        background: linear-gradient(135deg, #fff7ed, #fffbeb);
+        border-color: rgba(234, 88, 12, 0.26);
+    }
+    .rt-status-card-ok {
+        background: linear-gradient(135deg, #f0fdf4, #ecfeff);
+        border-color: rgba(22, 163, 74, 0.22);
+    }
+    .rt-status-card-title {
+        font-size: 1.02rem;
+        font-weight: 950;
+        color: #0f172a;
+        margin-bottom: 0.3rem;
+    }
+    .rt-status-card-body {
+        color: rgba(15, 23, 42, 0.76);
+        font-size: 0.92rem;
+        font-weight: 650;
+        line-height: 1.35;
+    }
+    .rt-prompt-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+    }
+    .rt-prompt {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 0.65rem;
+        border-radius: 16px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: rgba(248, 250, 252, 0.88);
+        padding: 0.68rem 0.72rem;
+    }
+    .rt-prompt-num {
+        width: 32px;
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 11px;
+        background: linear-gradient(135deg, #4f46e5, #06b6d4);
+        color: #ffffff;
+        font-weight: 950;
+        font-size: 0.9rem;
+    }
+    .rt-prompt-text {
+        color: rgba(15, 23, 42, 0.86);
+        font-weight: 750;
+        line-height: 1.28;
+        font-size: 0.94rem;
+    }
+    .rt-commentary {
+        border-radius: 18px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        padding: 0.82rem 0.88rem;
+        color: rgba(15, 23, 42, 0.86);
+        font-size: 0.95rem;
+        font-weight: 650;
+        line-height: 1.34;
+        white-space: pre-wrap;
+    }
+    @media (max-width: 1100px) {
+        .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .rt-field-grid { grid-template-columns: 1fr; }
+        .rt-hero-top { flex-direction: column; }
+        .rt-status-pill { text-align: left; }
+    }
+</style>
+"""
 
 
-def render_kpi_strip(items: List[Tuple[str, object, object]]) -> None:
-    cols = st.columns(len(items), gap="medium")
-    for col, (label, value, helper) in zip(cols, items):
-        with col:
-            render_stat_tile(label, value, helper)
+def apply_presentation_css() -> None:
+    st.markdown(PRESENTATION_CSS, unsafe_allow_html=True)
 
 
-def render_detail_matrix(items: List[Tuple[str, object]], columns: int = 2) -> None:
-    for start in range(0, len(items), columns):
-        row_items = items[start : start + columns]
-        cols = st.columns(len(row_items), gap="medium")
-        for col, (label, value) in zip(cols, row_items):
-            with col:
-                with st.container(border=True):
-                    st.caption(label)
-                    st.markdown(f"**{markdown_safe(value)}**")
+def render_html_kpi_strip(items: List[Tuple[str, object, object]]) -> None:
+    cards = []
+    for label, value, helper in items:
+        helper_text = html_safe(helper, blank="")
+        helper_html = f"<div class='rt-kpi-helper'>{helper_text}</div>" if helper_text else ""
+        cards.append(
+            "<div class='rt-kpi'>"
+            f"<div class='rt-kpi-label'>{html_safe(label)}</div>"
+            f"<div class='rt-kpi-value'>{html_safe(value)}</div>"
+            f"{helper_html}"
+            "</div>"
+        )
+    st.markdown(f"<div class='rt-kpi-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
-def render_prompt_list(prompts: List[str]) -> None:
+def render_html_field_panel(title: str, items: List[Tuple[str, object]], note: object = "") -> None:
+    fields = []
+    for label, value in items:
+        fields.append(
+            "<div class='rt-field'>"
+            f"<div class='rt-field-label'>{html_safe(label)}</div>"
+            f"<div class='rt-field-value'>{html_safe(value)}</div>"
+            "</div>"
+        )
+    note_text = html_safe(note, blank="")
+    note_html = f"<div class='rt-panel-note'>{note_text}</div>" if note_text else ""
+    st.markdown(
+        "<section class='rt-panel'>"
+        "<div class='rt-panel-header'>"
+        f"<div class='rt-panel-title'>{html_safe(title)}</div>"
+        f"{note_html}"
+        "</div>"
+        f"<div class='rt-field-grid'>{''.join(fields)}</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_html_prompt_panel(prompts: List[str]) -> None:
+    blocks = []
     for i, prompt in enumerate(prompts, start=1):
-        with st.container(border=True):
-            left, right = st.columns([0.12, 0.88], vertical_alignment="top")
-            with left:
-                st.markdown(f"### {i}")
-            with right:
-                st.write(prompt)
+        blocks.append(
+            "<div class='rt-prompt'>"
+            f"<div class='rt-prompt-num'>{i}</div>"
+            f"<div class='rt-prompt-text'>{html_safe(prompt)}</div>"
+            "</div>"
+        )
+    st.markdown(
+        "<section class='rt-panel'>"
+        "<div class='rt-panel-header'><div class='rt-panel-title'>Presenter prompts</div></div>"
+        f"<div class='rt-prompt-list'>{''.join(blocks)}</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_html_commentary_panel(commentary: object) -> None:
+    st.markdown(
+        "<section class='rt-panel'>"
+        "<div class='rt-panel-header'><div class='rt-panel-title'>AM commentary</div></div>"
+        f"<div class='rt-commentary'>{html_safe(commentary, blank='No commentary entered.')}</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_agenda_jump(deck: pd.DataFrame, current_idx: int) -> None:
@@ -1383,15 +1686,24 @@ def render_agenda_jump(deck: pd.DataFrame, current_idx: int) -> None:
         st.rerun()
 
 
-def render_status_check_panel(current_row: pd.Series) -> None:
+def render_html_status_check_panel(current_row: pd.Series) -> None:
     status_text = display_text(current_row.get("status"), blank="No status")
     if bool(current_row.get("status_needs_update_prompt", False)):
-        with st.status("Status check needed", state="error", expanded=True):
-            st.write(str(current_row.get("status_prompt_message") or "Status review needed."))
-            st.write("Use **Edit status** before closing the discussion for this deal.")
+        title = "Status check needed"
+        body = str(current_row.get("status_prompt_message") or "Status review needed.")
+        card_class = "rt-status-card-warning"
     else:
-        with st.status("Status check clear", state="complete", expanded=False):
-            st.write(f"Current status: **{markdown_safe(status_text)}**")
+        title = "Status check clear"
+        body = f"Current status: {status_text}. Keep it as-is or use Edit status if the story changed."
+        card_class = "rt-status-card-ok"
+
+    st.markdown(
+        f"<section class='rt-status-card {card_class}'>"
+        f"<div class='rt-status-card-title'>{html_safe(title)}</div>"
+        f"<div class='rt-status-card-body'>{html_safe(body)}</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
 
 
 def build_capital_items(current_row: pd.Series) -> List[Tuple[str, object]]:
@@ -1419,7 +1731,34 @@ def build_capital_items(current_row: pd.Series) -> List[Tuple[str, object]]:
     ]
 
 
+def render_html_hero(current_row: pd.Series, current_idx: int, total_count: int) -> None:
+    status_class = "rt-status-warning" if bool(current_row.get("status_needs_update_prompt", False)) else "rt-status-ok"
+    st.markdown(
+        "<section class='rt-hero'>"
+        "<div class='rt-hero-top'>"
+        "<div>"
+        f"<div class='rt-eyebrow'>{html_safe(current_row.get('sheet'))} &bull; Agenda {current_idx + 1} of {total_count}</div>"
+        f"<div class='rt-hero-title'>{html_safe(current_row.get('deal_name'))}</div>"
+        f"<div class='rt-hero-subtitle'>Deal {html_safe(current_row.get('deal_number'))} &bull; Borrower: {html_safe(current_row.get('borrower'))}</div>"
+        "<div class='rt-chip-row'>"
+        f"<span class='rt-chip'>Owner: {html_safe(current_row.get('owner'))}</span>"
+        f"<span class='rt-chip'>Servicer: {html_safe(current_row.get('servicer'))}</span>"
+        f"<span class='rt-chip'>Portfolio: {html_safe(current_row.get('portfolio'))}</span>"
+        f"<span class='rt-chip'>Segment: {html_safe(current_row.get('segment'))}</span>"
+        "</div>"
+        "</div>"
+        f"<div class='rt-status-pill {status_class}'>"
+        "<div class='rt-label'>Current Status</div>"
+        f"<div class='rt-value'>{html_safe(current_row.get('status'), blank='No status')}</div>"
+        "</div>"
+        "</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+    apply_presentation_css()
     sync_selected_deal(deck)
     current_row = get_selected_row(deck)
     current_idx = int(deck.index[deck["deal_key"] == current_row["deal_key"]][0])
@@ -1464,72 +1803,42 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
         st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
 
-    hero_left, hero_right = st.columns([1.65, 0.95], gap="large", vertical_alignment="top")
-    with hero_left:
-        with st.container(border=True):
-            st.caption(f"{display_text(current_row.get('sheet'))} | Deal {display_text(current_row.get('deal_number'))}")
-            st.title(display_text(current_row.get("deal_name")))
-            st.write(
-                f"Borrower: **{markdown_safe(current_row.get('borrower'))}**  |  "
-                f"Owner: **{markdown_safe(current_row.get('owner'))}**  |  "
-                f"Servicer: **{markdown_safe(current_row.get('servicer'))}**"
-            )
-            st.caption(
-                f"Portfolio: {display_text(current_row.get('portfolio'))} | "
-                f"Segment: {display_text(current_row.get('segment'))} | "
-                f"Account: {display_text(current_row.get('account_display'))}"
-            )
-    with hero_right:
-        render_status_check_panel(current_row)
+    render_html_hero(current_row, current_idx, total_count)
 
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
-    render_kpi_strip(
+    render_html_kpi_strip(
         [
             ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance"),
             ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount"),
             ("Maturity", fmt_date(current_row.get("maturity_date")), fmt_day_delta(current_row.get("days_to_maturity"))),
             ("Next Payment", fmt_date(current_row.get("next_payment_date")), fmt_day_delta(current_row.get("days_to_next_payment"))),
-            ("Status", display_text(current_row.get("status")), "Current meeting status"),
+            ("Status", display_text(current_row.get("status"), blank="No status"), "Current meeting status"),
         ]
     )
 
-    st.write("")
-
-    main_left, main_right = st.columns([1.15, 0.85], gap="large", vertical_alignment="top")
+    main_left, main_right = st.columns([1.18, 0.82], gap="large", vertical_alignment="top")
 
     with main_left:
-        with st.container(border=True):
-            heading_left, heading_right = st.columns([0.68, 0.32], vertical_alignment="center")
-            with heading_left:
-                st.subheader("Deal snapshot")
-            with heading_right:
-                st.caption(f"Days Past Due: {fmt_int(current_row.get('days_past_due'))}")
-            render_detail_matrix(
-                [
-                    ("Borrower", current_row.get("borrower")),
-                    ("Account", current_row.get("account_display")),
-                    ("Deal #", current_row.get("deal_number")),
-                    ("Servicer", current_row.get("servicer")),
-                    ("Portfolio", current_row.get("portfolio")),
-                    ("Segment", current_row.get("segment")),
-                    ("Owner", current_row.get("owner")),
-                    ("NPL / Delinquency", current_row.get("npl_raw")),
-                ],
-                columns=2,
-            )
-
-        with st.container(border=True):
-            st.subheader("Capital profile")
-            render_detail_matrix(build_capital_items(current_row), columns=2)
+        render_html_field_panel(
+            "Deal snapshot",
+            [
+                ("Borrower", current_row.get("borrower")),
+                ("Account", current_row.get("account_display")),
+                ("Deal #", current_row.get("deal_number")),
+                ("Servicer", current_row.get("servicer")),
+                ("Portfolio", current_row.get("portfolio")),
+                ("Segment", current_row.get("segment")),
+                ("Owner", current_row.get("owner")),
+                ("NPL / Delinquency", current_row.get("npl_raw")),
+            ],
+            note=f"Days Past Due: {fmt_int(current_row.get('days_past_due'))}",
+        )
+        render_html_field_panel("Capital profile", build_capital_items(current_row))
 
     with main_right:
-        with st.container(border=True):
-            st.subheader("Presenter prompts")
-            render_prompt_list(build_presenter_prompts(current_row))
-
-        with st.expander("AM commentary", expanded=True):
-            commentary = display_text(current_row.get("commentary"), blank="No commentary entered.")
-            st.write(commentary)
+        render_html_status_check_panel(current_row)
+        render_html_prompt_panel(build_presenter_prompts(current_row))
+        render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
             start = max(current_idx - 3, 0)
@@ -1564,7 +1873,6 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
                 hide_index=True,
                 use_container_width=True,
             )
-
 
 def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     st.subheader("Review and update")
