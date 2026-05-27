@@ -98,7 +98,15 @@ LOAN_MOD_PERCENT_COLUMNS = [
     "Updated Total ARV LTV",
 ]
 
-LOAN_MOD_DETAIL_COLUMNS = [
+
+# Only these columns are loaded from the Loan Modifications sheet.
+# This keeps the app responsive even if Salesforce returns a larger history table.
+LOAN_MOD_CORE_COLUMNS = [
+    "Portfolio Overview Match",
+    "Deal Number",
+    "Deal Name",
+    "Opportunity Deal Loan Number",
+    "Opportunity Deal Name",
     "Loan Modification Name",
     "Status",
     "Loan Mod Type",
@@ -116,9 +124,14 @@ LOAN_MOD_DETAIL_COLUMNS = [
     "Extension Fee (%)",
     "Mod Has Fees",
     "Mod Has Pay Pik",
+    "Cancellation Reason",
     "Comments",
+    "Mod Reporting Type Comments",
     "Pay Pik Summary",
+    "Last Modified Date",
+    "Created Date",
 ]
+
 
 
 # -----------------------------------------------------------------------------
@@ -836,37 +849,62 @@ def empty_loan_modifications() -> pd.DataFrame:
     )
 
 
-def load_workbook_sheet_as_dataframe(workbook, sheet_name: str, key_header: str = "Deal Number") -> pd.DataFrame:
+def load_workbook_sheet_as_dataframe(
+    workbook,
+    sheet_name: str,
+    key_header: str = "Deal Number",
+    desired_columns: Optional[Iterable[str]] = None,
+) -> pd.DataFrame:
     if sheet_name not in workbook.sheetnames:
         return pd.DataFrame()
 
     ws = workbook[sheet_name]
+    wanted = {canon_header(col) for col in desired_columns or [] if norm_text(col)}
 
-    try:
-        header_row, last_col = find_header_row(ws, key_header=key_header)
-    except Exception:
-        header_row = 1
-        last_col = ws.max_column
+    header_values: Optional[Tuple[object, ...]] = None
+    data_rows: List[Tuple[object, ...]] = []
 
-    headers = [norm_text(ws.cell(header_row, c).value) for c in range(1, last_col + 1)]
-    rows: List[Dict[str, object]] = []
+    for row_idx, values in enumerate(ws.iter_rows(values_only=True), start=1):
+        values_tuple = tuple(values or ())
 
-    for r in range(header_row + 1, ws.max_row + 1):
-        row_dict: Dict[str, object] = {}
-
-        for c in range(1, last_col + 1):
-            header = headers[c - 1]
-            if not header:
-                continue
-            row_dict[header] = ws.cell(r, c).value
-
-        if all(value_is_blank(value) for value in row_dict.values()):
+        if header_values is None:
+            if any(canon_header(value) == canon_header(key_header) for value in values_tuple if value is not None):
+                header_values = values_tuple
             continue
 
-        rows.append(row_dict)
+        data_rows.append(values_tuple)
+
+    if header_values is None:
+        return pd.DataFrame(columns=list(desired_columns or []))
+
+    headers = [norm_text(value) for value in header_values]
+    selected_cols: List[Tuple[int, str]] = []
+    for idx, header in enumerate(headers):
+        if not header:
+            continue
+        if wanted and canon_header(header) not in wanted:
+            continue
+        selected_cols.append((idx, header))
+
+    if not selected_cols:
+        return pd.DataFrame(columns=list(desired_columns or []))
+
+    rows: List[Dict[str, object]] = []
+    for values in data_rows:
+        row_dict: Dict[str, object] = {}
+        has_value = False
+
+        for idx, header in selected_cols:
+            value = values[idx] if idx < len(values) else None
+            row_dict[header] = value
+            if not value_is_blank(value):
+                has_value = True
+
+        if has_value:
+            rows.append(row_dict)
 
     if not rows:
-        return pd.DataFrame(columns=headers)
+        return pd.DataFrame(columns=[header for _, header in selected_cols])
 
     return pd.DataFrame(rows)
 
@@ -884,6 +922,13 @@ def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     if deal_col != "Deal Number":
         df["Deal Number"] = df[deal_col]
+
+    # If the generator already marked which loan mods match the visible overview,
+    # keep only those rows. This avoids loading/rendering irrelevant Salesforce history.
+    if "Portfolio Overview Match" in df.columns:
+        match_series = df["Portfolio Overview Match"].map(norm_text).str.upper()
+        if (match_series == "YES").any():
+            df = df[match_series == "YES"].copy()
 
     for col in LOAN_MOD_DATE_COLUMNS:
         if col in df.columns:
@@ -957,20 +1002,11 @@ def load_loan_modifications_from_workbook(file_bytes: bytes) -> pd.DataFrame:
             workbook=workbook,
             sheet_name=LOAN_MOD_SHEET_NAME,
             key_header="Deal Number",
+            desired_columns=LOAN_MOD_CORE_COLUMNS,
         )
         return normalize_loan_modifications(raw_df)
     finally:
         workbook.close()
-
-
-def format_loan_mod_display_value(label: str, value: object) -> str:
-    if label in LOAN_MOD_DATE_COLUMNS:
-        return fmt_date(value)
-    if label in LOAN_MOD_MONEY_COLUMNS:
-        return fmt_money(value, decimals=0)
-    if label in LOAN_MOD_PERCENT_COLUMNS:
-        return fmt_percent(value)
-    return display_text(value)
 
 
 def build_loan_mod_summary_from_record(record: Dict[str, object]) -> str:
@@ -1022,53 +1058,73 @@ def add_loan_modification_columns(deck: pd.DataFrame, loan_mods: pd.DataFrame) -
 
     out = deck.copy()
 
-    out["loan_mod_count"] = 0
-    out["loan_mod_latest_summary"] = ""
-    out["loan_mod_latest_status"] = ""
-    out["loan_mod_latest_type"] = ""
-    out["loan_mod_latest_effective_date"] = pd.NaT
-    out["loan_mod_latest_finalized_date"] = pd.NaT
-    out["loan_mod_latest_updated_maturity_date"] = pd.NaT
-    out["loan_mod_latest_comments"] = ""
-    out["loan_mod_latest_pay_pik_summary"] = ""
-    out["loan_mod_records"] = [[] for _ in range(len(out))]
+    defaults = {
+        "loan_mod_count": 0,
+        "loan_mod_latest_summary": "",
+        "loan_mod_latest_status": "",
+        "loan_mod_latest_type": "",
+        "loan_mod_latest_name": "",
+        "loan_mod_latest_effective_date": pd.NaT,
+        "loan_mod_latest_finalized_date": pd.NaT,
+        "loan_mod_latest_previous_maturity_date": pd.NaT,
+        "loan_mod_latest_updated_maturity_date": pd.NaT,
+        "loan_mod_latest_previous_commitment": np.nan,
+        "loan_mod_latest_updated_commitment": np.nan,
+        "loan_mod_latest_previous_rate": np.nan,
+        "loan_mod_latest_updated_rate": np.nan,
+        "loan_mod_latest_modification_fee": np.nan,
+        "loan_mod_latest_extension_fee": np.nan,
+        "loan_mod_latest_has_fees": "",
+        "loan_mod_latest_has_pay_pik": "",
+        "loan_mod_latest_comments": "",
+        "loan_mod_latest_pay_pik_summary": "",
+        "loan_mod_latest_cancellation_reason": "",
+        "loan_mod_latest_reporting_comments": "",
+    }
+
+    for col, default_value in defaults.items():
+        out[col] = default_value
 
     if loan_mods is None or loan_mods.empty or "deal_number_key" not in loan_mods.columns:
         return out
 
-    grouped = {
-        deal_number: group.copy()
-        for deal_number, group in loan_mods.groupby("deal_number_key", sort=False)
-        if norm_text(deal_number)
-    }
+    count_by_deal = loan_mods["deal_number_key"].value_counts().to_dict()
+    latest_by_deal = loan_mods.drop_duplicates("deal_number_key", keep="first").set_index("deal_number_key")
 
     for idx, row in out.iterrows():
         deal_number = norm_text(row.get("deal_number"))
-        if not deal_number or deal_number not in grouped:
+        if not deal_number or deal_number not in latest_by_deal.index:
             continue
 
-        group = grouped[deal_number].copy()
-        records = group.to_dict("records")
-        if not records:
-            continue
-
-        latest = records[0]
+        latest = latest_by_deal.loc[deal_number]
+        latest_dict = latest.to_dict()
         latest_type = first_nonblank_value(
-            latest.get("Loan Mod Type"),
-            latest.get("Modification Type"),
-            latest.get("Mod Reporting Type"),
+            latest_dict.get("Loan Mod Type"),
+            latest_dict.get("Modification Type"),
+            latest_dict.get("Mod Reporting Type"),
         )
 
-        out.at[idx, "loan_mod_count"] = len(records)
-        out.at[idx, "loan_mod_latest_summary"] = build_loan_mod_summary_from_record(latest)
-        out.at[idx, "loan_mod_latest_status"] = display_text(latest.get("Status"), blank="")
+        out.at[idx, "loan_mod_count"] = int(count_by_deal.get(deal_number, 0))
+        out.at[idx, "loan_mod_latest_summary"] = build_loan_mod_summary_from_record(latest_dict)
+        out.at[idx, "loan_mod_latest_status"] = display_text(latest_dict.get("Status"), blank="")
         out.at[idx, "loan_mod_latest_type"] = display_text(latest_type, blank="")
-        out.at[idx, "loan_mod_latest_effective_date"] = coerce_datetime_value(latest.get("Mod Effective Date"))
-        out.at[idx, "loan_mod_latest_finalized_date"] = coerce_datetime_value(latest.get("Modification Finalized Date"))
-        out.at[idx, "loan_mod_latest_updated_maturity_date"] = coerce_datetime_value(latest.get("Updated Maturity Date"))
-        out.at[idx, "loan_mod_latest_comments"] = display_text(latest.get("Comments"), blank="")
-        out.at[idx, "loan_mod_latest_pay_pik_summary"] = display_text(latest.get("Pay Pik Summary"), blank="")
-        out.at[idx, "loan_mod_records"] = records
+        out.at[idx, "loan_mod_latest_name"] = display_text(latest_dict.get("Loan Modification Name"), blank="")
+        out.at[idx, "loan_mod_latest_effective_date"] = coerce_datetime_value(latest_dict.get("Mod Effective Date"))
+        out.at[idx, "loan_mod_latest_finalized_date"] = coerce_datetime_value(latest_dict.get("Modification Finalized Date"))
+        out.at[idx, "loan_mod_latest_previous_maturity_date"] = coerce_datetime_value(latest_dict.get("Previous Maturity Date"))
+        out.at[idx, "loan_mod_latest_updated_maturity_date"] = coerce_datetime_value(latest_dict.get("Updated Maturity Date"))
+        out.at[idx, "loan_mod_latest_previous_commitment"] = latest_dict.get("Previous Loan Commitment")
+        out.at[idx, "loan_mod_latest_updated_commitment"] = latest_dict.get("Updated Loan Commitment")
+        out.at[idx, "loan_mod_latest_previous_rate"] = latest_dict.get("Previous Interest Rate")
+        out.at[idx, "loan_mod_latest_updated_rate"] = latest_dict.get("Updated Interest Rate")
+        out.at[idx, "loan_mod_latest_modification_fee"] = latest_dict.get("Modification Fee %")
+        out.at[idx, "loan_mod_latest_extension_fee"] = latest_dict.get("Extension Fee (%)")
+        out.at[idx, "loan_mod_latest_has_fees"] = display_text(latest_dict.get("Mod Has Fees"), blank="")
+        out.at[idx, "loan_mod_latest_has_pay_pik"] = display_text(latest_dict.get("Mod Has Pay Pik"), blank="")
+        out.at[idx, "loan_mod_latest_comments"] = display_text(latest_dict.get("Comments"), blank="")
+        out.at[idx, "loan_mod_latest_pay_pik_summary"] = display_text(latest_dict.get("Pay Pik Summary"), blank="")
+        out.at[idx, "loan_mod_latest_cancellation_reason"] = display_text(latest_dict.get("Cancellation Reason"), blank="")
+        out.at[idx, "loan_mod_latest_reporting_comments"] = display_text(latest_dict.get("Mod Reporting Type Comments"), blank="")
 
     return out
 
@@ -1078,59 +1134,6 @@ def has_loan_mods(row: pd.Series) -> bool:
         return int(row.get("loan_mod_count") or 0) > 0
     except Exception:
         return False
-
-
-def build_loan_mod_detail_dataframe(records: List[Dict[str, object]]) -> pd.DataFrame:
-    if not records:
-        return pd.DataFrame()
-
-    rows = []
-    for record in records:
-        row = {}
-        for col in LOAN_MOD_DETAIL_COLUMNS:
-            if col not in record:
-                continue
-            row[col] = format_loan_mod_display_value(col, record.get(col))
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-def build_loan_mod_overview_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
-    if deck.empty or "loan_mod_records" not in deck.columns:
-        return pd.DataFrame()
-
-    rows = []
-
-    for _, deck_row in deck.iterrows():
-        records = deck_row.get("loan_mod_records") or []
-        if not records:
-            continue
-
-        for record in records:
-            rows.append(
-                {
-                    "Type": deck_row.get("sheet"),
-                    "Deal Name": deck_row.get("deal_name"),
-                    "Deal #": deck_row.get("deal_number"),
-                    "Loan Mod": display_text(record.get("Loan Modification Name")),
-                    "Status": display_text(record.get("Status")),
-                    "Type / Detail": display_text(
-                        first_nonblank_value(record.get("Loan Mod Type"), record.get("Modification Type"))
-                    ),
-                    "Effective": fmt_date(record.get("Mod Effective Date")),
-                    "Finalized": fmt_date(record.get("Modification Finalized Date")),
-                    "Updated Maturity": fmt_date(record.get("Updated Maturity Date")),
-                    "Previous Commitment": fmt_money(record.get("Previous Loan Commitment"), decimals=0),
-                    "Updated Commitment": fmt_money(record.get("Updated Loan Commitment"), decimals=0),
-                    "Previous Rate": fmt_percent(record.get("Previous Interest Rate")),
-                    "Updated Rate": fmt_percent(record.get("Updated Interest Rate")),
-                    "Comments": display_text(record.get("Comments"), blank=""),
-                    "Pay Pik Summary": display_text(record.get("Pay Pik Summary"), blank=""),
-                }
-            )
-
-    return pd.DataFrame(rows)
 
 
 # -----------------------------------------------------------------------------
@@ -1404,8 +1407,6 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     review["Next Payment"] = review["next_payment_date"].map(fmt_date)
     review["UPB"] = review["upb"].map(lambda x: fmt_money(x, decimals=0))
     review["Update Reminder"] = review["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
-    review["Loan Mods"] = review["loan_mod_count"] if "loan_mod_count" in review.columns else 0
-    review["Latest Loan Mod"] = review["loan_mod_latest_summary"] if "loan_mod_latest_summary" in review.columns else ""
     review["Status"] = review["status"].fillna("").astype(str)
     review["Owner"] = review["owner"].fillna("").astype(str)
     review["AM Commentary"] = review["commentary"].fillna("").astype(str)
@@ -1420,8 +1421,6 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "Next Payment",
             "UPB",
             "Update Reminder",
-            "Loan Mods",
-            "Latest Loan Mod",
             "Status",
             "Owner",
             "AM Commentary",
@@ -1730,19 +1729,6 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
             ),
             hide_index=True,
             use_container_width=True,
-        )
-
-    loan_mod_overview = build_loan_mod_overview_dataframe(deck)
-    if not loan_mod_overview.empty:
-        st.subheader("Loan modification details")
-        st.dataframe(
-            loan_mod_overview,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Comments": st.column_config.TextColumn("Comments", width="large"),
-                "Pay Pik Summary": st.column_config.TextColumn("Pay Pik Summary", width="large"),
-            },
         )
 
 
@@ -2070,12 +2056,23 @@ def render_html_hero(current_row: pd.Series, current_idx: int, total_count: int)
     )
 
 
+def build_loan_mod_commentary_from_current_row(current_row: pd.Series) -> str:
+    sections = []
+    for label, column_name in [
+        ("Comments", "loan_mod_latest_comments"),
+        ("Pay Pik Summary", "loan_mod_latest_pay_pik_summary"),
+        ("Cancellation Reason", "loan_mod_latest_cancellation_reason"),
+        ("Mod Reporting Type Comments", "loan_mod_latest_reporting_comments"),
+    ]:
+        value = display_text(current_row.get(column_name), blank="")
+        if value:
+            sections.append(f"{label}: {value}")
+    return "\n\n".join(sections)
+
+
 def render_html_loan_modification_panel(current_row: pd.Series) -> None:
     if not has_loan_mods(current_row):
         return
-
-    records = current_row.get("loan_mod_records") or []
-    latest = records[0] if records else {}
 
     render_html_field_panel(
         "Loan modification snapshot",
@@ -2084,19 +2081,19 @@ def render_html_loan_modification_panel(current_row: pd.Series) -> None:
             ("Mod Status", current_row.get("loan_mod_latest_status")),
             ("Effective Date", fmt_date(current_row.get("loan_mod_latest_effective_date"))),
             ("Finalized Date", fmt_date(current_row.get("loan_mod_latest_finalized_date"))),
-            ("Previous Maturity", fmt_date(latest.get("Previous Maturity Date"))),
-            ("Updated Maturity", fmt_date(latest.get("Updated Maturity Date"))),
-            ("Previous Commitment", fmt_money(latest.get("Previous Loan Commitment"), decimals=0)),
-            ("Updated Commitment", fmt_money(latest.get("Updated Loan Commitment"), decimals=0)),
-            ("Previous Rate", fmt_percent(latest.get("Previous Interest Rate"))),
-            ("Updated Rate", fmt_percent(latest.get("Updated Interest Rate"))),
-            ("Modification Fee", fmt_percent(latest.get("Modification Fee %"))),
-            ("Extension Fee", fmt_percent(latest.get("Extension Fee (%)"))),
+            ("Previous Maturity", fmt_date(current_row.get("loan_mod_latest_previous_maturity_date"))),
+            ("Updated Maturity", fmt_date(current_row.get("loan_mod_latest_updated_maturity_date"))),
+            ("Previous Commitment", fmt_money(current_row.get("loan_mod_latest_previous_commitment"), decimals=0)),
+            ("Updated Commitment", fmt_money(current_row.get("loan_mod_latest_updated_commitment"), decimals=0)),
+            ("Previous Rate", fmt_percent(current_row.get("loan_mod_latest_previous_rate"))),
+            ("Updated Rate", fmt_percent(current_row.get("loan_mod_latest_updated_rate"))),
+            ("Modification Fee", fmt_percent(current_row.get("loan_mod_latest_modification_fee"))),
+            ("Extension Fee", fmt_percent(current_row.get("loan_mod_latest_extension_fee"))),
         ],
         note=f"{fmt_int(current_row.get('loan_mod_count'))} mod record(s)",
     )
 
-    mod_commentary = build_loan_mod_commentary_from_record(latest)
+    mod_commentary = build_loan_mod_commentary_from_current_row(current_row)
     if mod_commentary:
         st.markdown(
             "<section class='rt-panel'>"
@@ -2105,11 +2102,6 @@ def render_html_loan_modification_panel(current_row: pd.Series) -> None:
             "</section>",
             unsafe_allow_html=True,
         )
-
-    detail_df = build_loan_mod_detail_dataframe(records)
-    if not detail_df.empty:
-        with st.expander("All loan modification records", expanded=False):
-            st.dataframe(detail_df, hide_index=True, use_container_width=True)
 
 
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
@@ -2246,7 +2238,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 # -----------------------------------------------------------------------------
 def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     st.subheader("Review and update")
-    st.caption("Edit Status, Owner, and AM Commentary. Loan modification columns are reference-only.")
+    st.caption("Edit Status, Owner, and AM Commentary. Disabled columns are for reference.")
 
     review_df = build_review_dataframe(deck)
     edited_df = st.data_editor(
@@ -2263,14 +2255,11 @@ def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
             "Next Payment",
             "UPB",
             "Update Reminder",
-            "Loan Mods",
-            "Latest Loan Mod",
         ],
         column_config={
             "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
             "Status": st.column_config.TextColumn("Status", width="medium"),
             "Owner": st.column_config.TextColumn("Owner", width="medium"),
-            "Latest Loan Mod": st.column_config.TextColumn("Latest Loan Mod", width="large"),
         },
     )
 
@@ -2303,8 +2292,6 @@ def render_exports_view(
     workbook_bytes = update_workbook_bytes(file_bytes, ensure_override_store())
     workbook_bytes = write_status_history_sheet_to_workbook_bytes(workbook_bytes, updated_history)
     agenda_bytes = build_agenda_dataframe(deck).to_csv(index=False).encode("utf-8")
-    loan_mod_overview = build_loan_mod_overview_dataframe(deck)
-    loan_mod_bytes = loan_mod_overview.to_csv(index=False).encode("utf-8") if not loan_mod_overview.empty else b""
 
     c1, c2 = st.columns(2)
     with c1:
@@ -2322,14 +2309,6 @@ def render_exports_view(
             file_name="weekly_portfolio_agenda.csv",
             mime="text/csv",
             use_container_width=True,
-        )
-        st.download_button(
-            "Download loan modification details CSV",
-            data=loan_mod_bytes,
-            file_name="weekly_portfolio_loan_modifications.csv",
-            mime="text/csv",
-            use_container_width=True,
-            disabled=(len(loan_mod_bytes) == 0),
         )
 
     with c2:
@@ -2349,8 +2328,8 @@ def render_exports_view(
         )
 
     st.info(
-        "The updated workbook includes the hidden _Status History sheet and preserves the Loan Modifications sheet. "
-        "Use the Jupyter weekly overview generator as the normal path; CSV files are only backups/exports."
+        "The updated workbook includes the hidden _Status History sheet. Use that workbook or the "
+        "Jupyter weekly overview generator as the normal path; the CSV is only a backup/export."
     )
 
     st.subheader("Recommended .gitignore entries")
