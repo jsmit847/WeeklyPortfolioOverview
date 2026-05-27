@@ -53,7 +53,77 @@ COMMON_STATUS_SUGGESTIONS = [
     "Resolved",
 ]
 
+# -----------------------------------------------------------------------------
+# Loan Modification sheet settings
+# -----------------------------------------------------------------------------
+LOAN_MOD_SHEET_NAME = "Loan Modifications"
 
+LOAN_MOD_DATE_COLUMNS = [
+    "Cancellation Date",
+    "Forbearance Termination Date",
+    "Last Activity Date",
+    "System Task Completed Date",
+    "Mod Effective Date",
+    "Modification Finalized Date",
+    "Updated Maturity Date",
+    "Previous Expiration Date",
+    "Previous Maturity Date",
+    "Prior Forbearance Termination Date",
+    "Updated Expiration Date",
+    "Created Date",
+    "Last Modified Date",
+    "System Modstamp",
+    "Opportunity Close Date",
+]
+
+LOAN_MOD_MONEY_COLUMNS = [
+    "Previous Loan Commitment",
+    "Updated Loan Commitment",
+]
+
+LOAN_MOD_PERCENT_COLUMNS = [
+    "Extension Fee (%)",
+    "Modification Fee %",
+    "Previous Exit Fee",
+    "Previous Floor",
+    "Previous Index Margin",
+    "Previous Interest Rate",
+    "Previous Max LTV %",
+    "Previous Total ARV LTV",
+    "Updated Exit Fee",
+    "Updated Floor",
+    "Updated Index Margin",
+    "Updated Interest Rate",
+    "Updated Max LTV %",
+    "Updated Total ARV LTV",
+]
+
+LOAN_MOD_DETAIL_COLUMNS = [
+    "Loan Modification Name",
+    "Status",
+    "Loan Mod Type",
+    "Modification Type",
+    "Mod Reporting Type",
+    "Mod Effective Date",
+    "Modification Finalized Date",
+    "Previous Maturity Date",
+    "Updated Maturity Date",
+    "Previous Loan Commitment",
+    "Updated Loan Commitment",
+    "Previous Interest Rate",
+    "Updated Interest Rate",
+    "Modification Fee %",
+    "Extension Fee (%)",
+    "Mod Has Fees",
+    "Mod Has Pay Pik",
+    "Comments",
+    "Pay Pik Summary",
+]
+
+
+# -----------------------------------------------------------------------------
+# Formatting / normalization helpers
+# -----------------------------------------------------------------------------
 def norm_text(value: object) -> str:
     if value is None:
         return ""
@@ -86,6 +156,21 @@ def first_existing_file(paths: Iterable[Path]) -> Optional[Path]:
     return None
 
 
+def value_is_blank(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and np.isnan(value):
+        return True
+    return norm_text(value) == ""
+
+
+def first_nonblank_value(*values: object) -> object:
+    for value in values:
+        if not value_is_blank(value):
+            return value
+    return None
+
+
 def fmt_money(value: object, decimals: int = 0, blank: str = "-") -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return blank
@@ -111,16 +196,60 @@ def fmt_int(value: object, blank: str = "-") -> str:
         return blank
 
 
-def fmt_date(value: object, blank: str = "-") -> str:
+def coerce_datetime_value(value: object):
     if value is None:
-        return blank
+        return pd.NaT
+    if isinstance(value, float) and np.isnan(value):
+        return pd.NaT
+    if isinstance(value, (pd.Timestamp, dt.datetime, dt.date)):
+        return pd.to_datetime(value, errors="coerce")
+
     try:
-        timestamp = pd.to_datetime(value, errors="coerce")
+        number = float(value)
+        if 20000 <= number <= 80000:
+            return pd.Timestamp("1899-12-30") + pd.to_timedelta(number, unit="D")
     except Exception:
-        return blank
+        pass
+
+    return pd.to_datetime(value, errors="coerce")
+
+
+def coerce_datetime_series(values: object) -> pd.Series:
+    series = pd.Series(values)
+    parsed = pd.to_datetime(series, errors="coerce")
+    numeric = pd.to_numeric(series, errors="coerce")
+    serial_mask = numeric.notna() & numeric.between(20000, 80000)
+
+    if serial_mask.any():
+        parsed.loc[serial_mask] = pd.to_datetime(
+            numeric.loc[serial_mask],
+            unit="D",
+            origin="1899-12-30",
+            errors="coerce",
+        )
+
+    return parsed
+
+
+def fmt_date(value: object, blank: str = "-") -> str:
+    timestamp = coerce_datetime_value(value)
     if pd.isna(timestamp):
         return blank
-    return timestamp.strftime("%m/%d/%Y")
+    return pd.Timestamp(timestamp).strftime("%m/%d/%Y")
+
+
+def fmt_percent(value: object, decimals: int = 2, blank: str = "-") -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return blank
+    try:
+        number = float(value)
+    except Exception:
+        return blank
+    if np.isnan(number):
+        return blank
+    if abs(number) <= 1.5:
+        number *= 100
+    return f"{number:,.{decimals}f}%"
 
 
 def fmt_day_delta(days: object, blank: str = "-") -> str:
@@ -151,7 +280,7 @@ def safe_numeric_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Seri
 
 def safe_datetime_series(df: pd.DataFrame, column_name: Optional[str]) -> pd.Series:
     if column_name and column_name in df.columns:
-        return pd.to_datetime(df[column_name], errors="coerce")
+        return coerce_datetime_series(df[column_name])
     return pd.Series([pd.NaT] * len(df), index=df.index)
 
 
@@ -248,6 +377,9 @@ def fallback_name(
     return result.map(norm_text)
 
 
+# -----------------------------------------------------------------------------
+# Status history handling
+# -----------------------------------------------------------------------------
 def empty_status_history() -> pd.DataFrame:
     return pd.DataFrame(columns=STATUS_HISTORY_COLUMNS)
 
@@ -346,7 +478,6 @@ def status_history_to_csv_bytes(history_df: pd.DataFrame) -> bytes:
     return history.to_csv(index=False).encode("utf-8")
 
 
-
 def read_embedded_status_history_from_workbook_bytes(file_bytes: bytes) -> pd.DataFrame:
     """Read hidden/embedded status history from the uploaded workbook, if present."""
     try:
@@ -434,11 +565,6 @@ def write_status_history_sheet_to_workbook_bytes(file_bytes: bytes, history_df: 
     return out.getvalue()
 
 
-def mark_current_deal_reviewed(deal_key: str) -> None:
-    flags = ensure_review_flags()
-    flags[deal_key] = True
-
-
 def status_streak_for_deal(
     history: pd.DataFrame,
     deal_key: str,
@@ -466,6 +592,19 @@ def status_streak_for_deal(
         oldest_same_date = row["meeting_date_dt"].strftime("%m/%d/%Y")
 
     return same_count, oldest_same_date
+
+
+def build_status_prompt_message(row: pd.Series) -> str:
+    if not bool(row.get("status_needs_update_prompt", False)):
+        return ""
+
+    current_update = display_text(row.get("status"), blank="blank")
+    count = int(row.get("status_same_meeting_count") or 0)
+    since = display_text(row.get("status_same_since"), blank="unknown")
+    return (
+        f"This deal has carried the same meeting update for {count} meetings since {since}. "
+        f"Confirm whether '{current_update}' still reflects the latest story, or refresh the update/commentary."
+    )
 
 
 def add_status_staleness_columns(
@@ -499,19 +638,9 @@ def add_status_staleness_columns(
     return out
 
 
-def build_status_prompt_message(row: pd.Series) -> str:
-    if not bool(row.get("status_needs_update_prompt", False)):
-        return ""
-
-    current_update = display_text(row.get("status"), blank="blank")
-    count = int(row.get("status_same_meeting_count") or 0)
-    since = display_text(row.get("status_same_since"), blank="unknown")
-    return (
-        f"This deal has carried the same meeting update for {count} meetings since {since}. "
-        f"Confirm whether '{current_update}' still reflects the latest story, or refresh the update/commentary."
-    )
-
-
+# -----------------------------------------------------------------------------
+# Workbook loading: Bridge / Term
+# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_portfolio_workbook(
     file_bytes: bytes,
@@ -685,6 +814,328 @@ def load_portfolio_workbook(
     return deck, metadata
 
 
+# -----------------------------------------------------------------------------
+# Loan Modification loading and presentation helpers
+# -----------------------------------------------------------------------------
+def empty_loan_modifications() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "deal_number_key",
+            "Deal Number",
+            "Deal Name",
+            "Loan Modification Name",
+            "Status",
+            "Loan Mod Type",
+            "Modification Type",
+            "Mod Effective Date",
+            "Modification Finalized Date",
+            "Updated Maturity Date",
+            "Comments",
+            "Pay Pik Summary",
+        ]
+    )
+
+
+def load_workbook_sheet_as_dataframe(workbook, sheet_name: str, key_header: str = "Deal Number") -> pd.DataFrame:
+    if sheet_name not in workbook.sheetnames:
+        return pd.DataFrame()
+
+    ws = workbook[sheet_name]
+
+    try:
+        header_row, last_col = find_header_row(ws, key_header=key_header)
+    except Exception:
+        header_row = 1
+        last_col = ws.max_column
+
+    headers = [norm_text(ws.cell(header_row, c).value) for c in range(1, last_col + 1)]
+    rows: List[Dict[str, object]] = []
+
+    for r in range(header_row + 1, ws.max_row + 1):
+        row_dict: Dict[str, object] = {}
+
+        for c in range(1, last_col + 1):
+            header = headers[c - 1]
+            if not header:
+                continue
+            row_dict[header] = ws.cell(r, c).value
+
+        if all(value_is_blank(value) for value in row_dict.values()):
+            continue
+
+        rows.append(row_dict)
+
+    if not rows:
+        return pd.DataFrame(columns=headers)
+
+    return pd.DataFrame(rows)
+
+
+def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
+    if raw_df is None or raw_df.empty:
+        return empty_loan_modifications()
+
+    df = raw_df.copy()
+    df.columns = [norm_text(col) for col in df.columns]
+
+    deal_col = resolve_column(df.columns, "Deal Number", "Opportunity Deal Loan Number")
+    if deal_col is None:
+        return empty_loan_modifications()
+
+    if deal_col != "Deal Number":
+        df["Deal Number"] = df[deal_col]
+
+    for col in LOAN_MOD_DATE_COLUMNS:
+        if col in df.columns:
+            df[col] = coerce_datetime_series(df[col])
+
+    for col in LOAN_MOD_MONEY_COLUMNS + LOAN_MOD_PERCENT_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    text_cols = [
+        "Deal Number",
+        "Deal Name",
+        "Opportunity Deal Name",
+        "Loan Modification Name",
+        "Status",
+        "Loan Mod Type",
+        "Modification Type",
+        "Mod Reporting Type",
+        "Mod Has Fees",
+        "Mod Has Pay Pik",
+        "Cancellation Reason",
+        "Comments",
+        "Mod Reporting Type Comments",
+        "Pay Pik Summary",
+    ]
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].map(norm_text)
+
+    if "Deal Name" not in df.columns:
+        df["Deal Name"] = ""
+
+    if "Opportunity Deal Name" in df.columns:
+        df["Deal Name"] = df["Deal Name"].where(
+            df["Deal Name"].map(norm_text) != "",
+            df["Opportunity Deal Name"].map(norm_text),
+        )
+
+    df["deal_number_key"] = df["Deal Number"].map(norm_text)
+
+    sort_cols = [
+        col
+        for col in [
+            "Modification Finalized Date",
+            "Mod Effective Date",
+            "Last Modified Date",
+            "Created Date",
+        ]
+        if col in df.columns
+    ]
+
+    if sort_cols:
+        df = df.sort_values(
+            ["deal_number_key"] + sort_cols,
+            ascending=[True] + [False] * len(sort_cols),
+            kind="stable",
+        )
+
+    return df.reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_loan_modifications_from_workbook(file_bytes: bytes) -> pd.DataFrame:
+    try:
+        workbook = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return empty_loan_modifications()
+
+    try:
+        raw_df = load_workbook_sheet_as_dataframe(
+            workbook=workbook,
+            sheet_name=LOAN_MOD_SHEET_NAME,
+            key_header="Deal Number",
+        )
+        return normalize_loan_modifications(raw_df)
+    finally:
+        workbook.close()
+
+
+def format_loan_mod_display_value(label: str, value: object) -> str:
+    if label in LOAN_MOD_DATE_COLUMNS:
+        return fmt_date(value)
+    if label in LOAN_MOD_MONEY_COLUMNS:
+        return fmt_money(value, decimals=0)
+    if label in LOAN_MOD_PERCENT_COLUMNS:
+        return fmt_percent(value)
+    return display_text(value)
+
+
+def build_loan_mod_summary_from_record(record: Dict[str, object]) -> str:
+    pieces = []
+
+    mod_type = first_nonblank_value(record.get("Loan Mod Type"), record.get("Modification Type"))
+    status = record.get("Status")
+    effective = fmt_date(record.get("Mod Effective Date"))
+    finalized = fmt_date(record.get("Modification Finalized Date"))
+    updated_maturity = fmt_date(record.get("Updated Maturity Date"))
+
+    if display_text(mod_type, blank=""):
+        pieces.append(display_text(mod_type))
+
+    if display_text(status, blank=""):
+        pieces.append(f"Status: {display_text(status)}")
+
+    if effective != "-":
+        pieces.append(f"Effective {effective}")
+
+    if finalized != "-":
+        pieces.append(f"Finalized {finalized}")
+
+    if updated_maturity != "-":
+        pieces.append(f"New maturity {updated_maturity}")
+
+    return " | ".join(pieces)
+
+
+def build_loan_mod_commentary_from_record(record: Dict[str, object]) -> str:
+    sections = []
+
+    for label in [
+        "Comments",
+        "Pay Pik Summary",
+        "Cancellation Reason",
+        "Mod Reporting Type Comments",
+    ]:
+        value = display_text(record.get(label), blank="")
+        if value:
+            sections.append(f"{label}: {value}")
+
+    return "\n\n".join(sections)
+
+
+def add_loan_modification_columns(deck: pd.DataFrame, loan_mods: pd.DataFrame) -> pd.DataFrame:
+    if deck.empty:
+        return deck.copy()
+
+    out = deck.copy()
+
+    out["loan_mod_count"] = 0
+    out["loan_mod_latest_summary"] = ""
+    out["loan_mod_latest_status"] = ""
+    out["loan_mod_latest_type"] = ""
+    out["loan_mod_latest_effective_date"] = pd.NaT
+    out["loan_mod_latest_finalized_date"] = pd.NaT
+    out["loan_mod_latest_updated_maturity_date"] = pd.NaT
+    out["loan_mod_latest_comments"] = ""
+    out["loan_mod_latest_pay_pik_summary"] = ""
+    out["loan_mod_records"] = [[] for _ in range(len(out))]
+
+    if loan_mods is None or loan_mods.empty or "deal_number_key" not in loan_mods.columns:
+        return out
+
+    grouped = {
+        deal_number: group.copy()
+        for deal_number, group in loan_mods.groupby("deal_number_key", sort=False)
+        if norm_text(deal_number)
+    }
+
+    for idx, row in out.iterrows():
+        deal_number = norm_text(row.get("deal_number"))
+        if not deal_number or deal_number not in grouped:
+            continue
+
+        group = grouped[deal_number].copy()
+        records = group.to_dict("records")
+        if not records:
+            continue
+
+        latest = records[0]
+        latest_type = first_nonblank_value(
+            latest.get("Loan Mod Type"),
+            latest.get("Modification Type"),
+            latest.get("Mod Reporting Type"),
+        )
+
+        out.at[idx, "loan_mod_count"] = len(records)
+        out.at[idx, "loan_mod_latest_summary"] = build_loan_mod_summary_from_record(latest)
+        out.at[idx, "loan_mod_latest_status"] = display_text(latest.get("Status"), blank="")
+        out.at[idx, "loan_mod_latest_type"] = display_text(latest_type, blank="")
+        out.at[idx, "loan_mod_latest_effective_date"] = coerce_datetime_value(latest.get("Mod Effective Date"))
+        out.at[idx, "loan_mod_latest_finalized_date"] = coerce_datetime_value(latest.get("Modification Finalized Date"))
+        out.at[idx, "loan_mod_latest_updated_maturity_date"] = coerce_datetime_value(latest.get("Updated Maturity Date"))
+        out.at[idx, "loan_mod_latest_comments"] = display_text(latest.get("Comments"), blank="")
+        out.at[idx, "loan_mod_latest_pay_pik_summary"] = display_text(latest.get("Pay Pik Summary"), blank="")
+        out.at[idx, "loan_mod_records"] = records
+
+    return out
+
+
+def has_loan_mods(row: pd.Series) -> bool:
+    try:
+        return int(row.get("loan_mod_count") or 0) > 0
+    except Exception:
+        return False
+
+
+def build_loan_mod_detail_dataframe(records: List[Dict[str, object]]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame()
+
+    rows = []
+    for record in records:
+        row = {}
+        for col in LOAN_MOD_DETAIL_COLUMNS:
+            if col not in record:
+                continue
+            row[col] = format_loan_mod_display_value(col, record.get(col))
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_loan_mod_overview_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
+    if deck.empty or "loan_mod_records" not in deck.columns:
+        return pd.DataFrame()
+
+    rows = []
+
+    for _, deck_row in deck.iterrows():
+        records = deck_row.get("loan_mod_records") or []
+        if not records:
+            continue
+
+        for record in records:
+            rows.append(
+                {
+                    "Type": deck_row.get("sheet"),
+                    "Deal Name": deck_row.get("deal_name"),
+                    "Deal #": deck_row.get("deal_number"),
+                    "Loan Mod": display_text(record.get("Loan Modification Name")),
+                    "Status": display_text(record.get("Status")),
+                    "Type / Detail": display_text(
+                        first_nonblank_value(record.get("Loan Mod Type"), record.get("Modification Type"))
+                    ),
+                    "Effective": fmt_date(record.get("Mod Effective Date")),
+                    "Finalized": fmt_date(record.get("Modification Finalized Date")),
+                    "Updated Maturity": fmt_date(record.get("Updated Maturity Date")),
+                    "Previous Commitment": fmt_money(record.get("Previous Loan Commitment"), decimals=0),
+                    "Updated Commitment": fmt_money(record.get("Updated Loan Commitment"), decimals=0),
+                    "Previous Rate": fmt_percent(record.get("Previous Interest Rate")),
+                    "Updated Rate": fmt_percent(record.get("Updated Interest Rate")),
+                    "Comments": display_text(record.get("Comments"), blank=""),
+                    "Pay Pik Summary": display_text(record.get("Pay Pik Summary"), blank=""),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+# -----------------------------------------------------------------------------
+# App state / overrides
+# -----------------------------------------------------------------------------
 def available_status_suggestions(deck: pd.DataFrame) -> List[str]:
     if "status" not in deck.columns:
         return COMMON_STATUS_SUGGESTIONS
@@ -725,6 +1176,11 @@ def ensure_review_flags() -> Dict[str, bool]:
     if "review_flags" not in st.session_state:
         st.session_state.review_flags = {}
     return st.session_state.review_flags
+
+
+def mark_current_deal_reviewed(deal_key: str) -> None:
+    flags = ensure_review_flags()
+    flags[deal_key] = True
 
 
 def upsert_override(
@@ -805,12 +1261,19 @@ def apply_filters(deck: pd.DataFrame) -> pd.DataFrame:
 
     query = st.session_state.search_query.strip().upper()
     if query:
-        filtered = filtered[
+        mask = (
             filtered["deal_number"].astype(str).str.upper().str.contains(query, na=False)
             | filtered["deal_name"].astype(str).str.upper().str.contains(query, na=False)
             | filtered["borrower"].astype(str).str.upper().str.contains(query, na=False)
-        ].copy()
+        )
 
+        if "loan_mod_latest_summary" in filtered.columns:
+            mask = mask | filtered["loan_mod_latest_summary"].astype(str).str.upper().str.contains(query, na=False)
+
+        if "loan_mod_latest_comments" in filtered.columns:
+            mask = mask | filtered["loan_mod_latest_comments"].astype(str).str.upper().str.contains(query, na=False)
+
+        filtered = filtered[mask].copy()
 
     if st.session_state.stale_only and "status_needs_update_prompt" in filtered.columns:
         filtered = filtered[filtered["status_needs_update_prompt"] == True].copy()  # noqa: E712
@@ -859,9 +1322,13 @@ def move_selection(deck: pd.DataFrame, step: int) -> None:
 def build_presenter_prompts(row: pd.Series) -> List[str]:
     prompts: List[str] = []
 
-    status_text = display_text(row.get("status"), blank="")
     if bool(row.get("status_needs_update_prompt", False)):
         prompts.append(str(row.get("status_prompt_message") or "Review whether the meeting update should be refreshed."))
+
+    if has_loan_mods(row):
+        prompts.append(
+            f"Review loan modification details: {display_text(row.get('loan_mod_latest_summary'), blank='latest modification on file')}."
+        )
 
     maturity_text = fmt_date(row.get("maturity_date"))
     payment_text = fmt_date(row.get("next_payment_date"))
@@ -882,16 +1349,9 @@ def build_presenter_prompts(row: pd.Series) -> List[str]:
     return prompts[:4]
 
 
-def render_field_grid(items: List[Tuple[str, object]]) -> None:
-    rows = [items[i : i + 2] for i in range(0, len(items), 2)]
-    for row_items in rows:
-        cols = st.columns(len(row_items))
-        for col, (label, value) in zip(cols, row_items):
-            with col:
-                st.caption(label)
-                st.write(display_text(value))
-
-
+# -----------------------------------------------------------------------------
+# Dataframes for tables and exports
+# -----------------------------------------------------------------------------
 def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     queue = deck.copy()
     queue.insert(0, "Agenda #", range(1, len(queue) + 1))
@@ -902,6 +1362,14 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     queue["Owner"] = queue["owner"].map(display_text)
     queue["Update Reminder"] = queue["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
 
+    if "loan_mod_count" not in queue.columns:
+        queue["loan_mod_count"] = 0
+    if "loan_mod_latest_summary" not in queue.columns:
+        queue["loan_mod_latest_summary"] = ""
+
+    queue["Loan Mods"] = queue["loan_mod_count"].map(lambda value: fmt_int(value) if int(value or 0) else "")
+    queue["Latest Loan Mod"] = queue["loan_mod_latest_summary"].map(lambda value: display_text(value, blank=""))
+
     return queue[
         [
             "Agenda #",
@@ -909,6 +1377,8 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "deal_name",
             "deal_number",
             "Update Reminder",
+            "Loan Mods",
+            "Latest Loan Mod",
             "Status",
             "Owner",
             "Maturity",
@@ -924,7 +1394,6 @@ def build_agenda_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-
 def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     review = deck.copy().set_index("deal_key")
     review.insert(0, "Agenda #", range(1, len(review) + 1))
@@ -935,6 +1404,8 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
     review["Next Payment"] = review["next_payment_date"].map(fmt_date)
     review["UPB"] = review["upb"].map(lambda x: fmt_money(x, decimals=0))
     review["Update Reminder"] = review["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+    review["Loan Mods"] = review["loan_mod_count"] if "loan_mod_count" in review.columns else 0
+    review["Latest Loan Mod"] = review["loan_mod_latest_summary"] if "loan_mod_latest_summary" in review.columns else ""
     review["Status"] = review["status"].fillna("").astype(str)
     review["Owner"] = review["owner"].fillna("").astype(str)
     review["AM Commentary"] = review["commentary"].fillna("").astype(str)
@@ -949,6 +1420,8 @@ def build_review_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
             "Next Payment",
             "UPB",
             "Update Reminder",
+            "Loan Mods",
+            "Latest Loan Mod",
             "Status",
             "Owner",
             "AM Commentary",
@@ -1036,6 +1509,7 @@ def build_updates_dataframe(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> pd.Da
         ]
     ]
 
+
 def export_overrides_csv(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> bytes:
     export_df = build_updates_dataframe(raw_deck, deck)
     if export_df.empty:
@@ -1122,7 +1596,9 @@ def process_status_history_upload() -> None:
         st.session_state.status_history_load_error = str(exc)
 
 
-
+# -----------------------------------------------------------------------------
+# Standard Streamlit controls and overview
+# -----------------------------------------------------------------------------
 def render_controls_bar(workbook_name: str) -> None:
     with st.sidebar:
         st.title(APP_TITLE)
@@ -1146,7 +1622,7 @@ def render_controls_bar(workbook_name: str) -> None:
 
         st.divider()
         st.subheader("Filters")
-        st.text_input("Search deal # / name / borrower", key="search_query")
+        st.text_input("Search deal # / name / borrower / loan mod", key="search_query")
         st.toggle("Update reminders only", key="stale_only")
 
         if st.button("Reset filters", use_container_width=True):
@@ -1175,6 +1651,7 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
             "you use a workbook generated by the weekly overview builder with the hidden history sheet."
         )
 
+
 def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     total_upb = deck["upb"].fillna(0).sum()
     bridge_count = int((deck["sheet"] == "Bridge").sum())
@@ -1182,12 +1659,19 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     next_30 = int((deck["days_to_maturity"].fillna(9999) <= 30).sum())
     stale_count = int(deck["status_needs_update_prompt"].sum())
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    if "loan_mod_count" in deck.columns:
+        loan_mod_count_series = pd.to_numeric(deck["loan_mod_count"], errors="coerce").fillna(0)
+    else:
+        loan_mod_count_series = pd.Series([0] * len(deck), index=deck.index)
+    loan_mod_deal_count = int((loan_mod_count_series.astype(int) > 0).sum())
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Agenda items", fmt_int(len(deck)))
     m2.metric("Total UPB", fmt_money(total_upb, decimals=0))
     m3.metric("Bridge / Term", f"{fmt_int(bridge_count)} / {fmt_int(term_count)}")
     m4.metric("Maturing in 30d", fmt_int(next_30), as_of_date.strftime("%m/%d/%Y"))
     m5.metric("Update reminders", fmt_int(stale_count))
+    m6.metric("Deals w/ loan mods", fmt_int(loan_mod_deal_count))
 
     render_status_history_notice(deck)
 
@@ -1248,6 +1732,23 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
             use_container_width=True,
         )
 
+    loan_mod_overview = build_loan_mod_overview_dataframe(deck)
+    if not loan_mod_overview.empty:
+        st.subheader("Loan modification details")
+        st.dataframe(
+            loan_mod_overview,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Comments": st.column_config.TextColumn("Comments", width="large"),
+                "Pay Pik Summary": st.column_config.TextColumn("Pay Pik Summary", width="large"),
+            },
+        )
+
+
+# -----------------------------------------------------------------------------
+# Edit dialog
+# -----------------------------------------------------------------------------
 def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     target = st.session_state.get("dialog_target")
     if not target:
@@ -1301,344 +1802,82 @@ def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -
     edit_dialog(current_row.to_dict(), raw_row.to_dict())
 
 
-
-
-
+# -----------------------------------------------------------------------------
+# Presentation HTML helpers
+# -----------------------------------------------------------------------------
 def html_safe(value: object, blank: str = "-") -> str:
     return html.escape(display_text(value, blank=blank), quote=True)
-
-
-def value_is_blank(value: object) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, float) and np.isnan(value):
-        return True
-    return norm_text(value) == ""
-
-
-def first_nonblank_value(*values: object) -> object:
-    for value in values:
-        if not value_is_blank(value):
-            return value
-    return None
 
 
 PRESENTATION_CSS = """
 <style>
     .rt-hero {
-        position: relative;
-        overflow: hidden;
         border: 1px solid rgba(148, 163, 184, 0.28);
         border-radius: 28px;
         padding: 1.28rem 1.38rem;
-        background:
-            radial-gradient(circle at 8% 14%, rgba(125, 159, 190, 0.18), transparent 28%),
-            radial-gradient(circle at 96% 5%, rgba(196, 181, 253, 0.16), transparent 24%),
-            linear-gradient(135deg, #ffffff 0%, #f7f9fc 48%, #eef4f8 100%);
+        background: linear-gradient(135deg, #ffffff 0%, #f7f9fc 48%, #eef4f8 100%);
         box-shadow: 0 18px 48px rgba(30, 41, 59, 0.10);
         margin: 0.70rem 0 0.88rem 0;
     }
-    .rt-hero:after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background-image:
-            linear-gradient(rgba(100, 116, 139, 0.045) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(100, 116, 139, 0.045) 1px, transparent 1px);
-        background-size: 42px 42px;
-        mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-        pointer-events: none;
-    }
-    .rt-hero-top {
-        position: relative;
-        z-index: 1;
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 1.1rem;
-    }
+    .rt-hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.1rem; }
     .rt-eyebrow {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        border-radius: 999px;
-        background: rgba(71, 85, 105, 0.08);
-        color: #475569;
-        border: 1px solid rgba(100, 116, 139, 0.16);
-        padding: 0.34rem 0.72rem;
-        font-size: 0.72rem;
-        font-weight: 900;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        display: inline-flex; border-radius: 999px; background: rgba(71, 85, 105, 0.08);
+        color: #475569; border: 1px solid rgba(100, 116, 139, 0.16);
+        padding: 0.34rem 0.72rem; font-size: 0.72rem; font-weight: 900;
+        letter-spacing: 0.08em; text-transform: uppercase;
     }
     .rt-hero-title {
-        max-width: 980px;
-        font-size: clamp(1.45rem, 2.25vw, 2.75rem);
-        line-height: 1.05;
-        font-weight: 940;
-        margin: 0.52rem 0 0.34rem 0;
-        color: #111827;
-        letter-spacing: -0.04em;
-        text-wrap: balance;
+        max-width: 980px; font-size: clamp(1.45rem, 2.25vw, 2.75rem);
+        line-height: 1.05; font-weight: 940; margin: 0.52rem 0 0.34rem 0;
+        color: #111827; letter-spacing: -0.04em;
     }
-    .rt-hero-subtitle {
-        font-size: 1.02rem;
-        color: #475569;
-        font-weight: 720;
-        line-height: 1.36;
-        margin-bottom: 0.9rem;
-    }
-    .rt-chip-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.45rem;
-    }
+    .rt-hero-subtitle { font-size: 1.02rem; color: #475569; font-weight: 720; line-height: 1.36; margin-bottom: 0.9rem; }
+    .rt-chip-row { display: flex; flex-wrap: wrap; gap: 0.45rem; }
     .rt-chip {
-        border: 1px solid rgba(100, 116, 139, 0.16);
-        background: rgba(255, 255, 255, 0.72);
-        color: #334155;
-        border-radius: 999px;
-        padding: 0.38rem 0.68rem;
-        font-size: 0.82rem;
-        font-weight: 820;
+        border: 1px solid rgba(100, 116, 139, 0.16); background: rgba(255, 255, 255, 0.72);
+        color: #334155; border-radius: 999px; padding: 0.38rem 0.68rem; font-size: 0.82rem; font-weight: 820;
     }
     .rt-status-pill {
-        border-radius: 22px;
-        padding: 0.78rem 0.9rem;
-        min-width: 190px;
-        text-align: right;
-        border: 1px solid rgba(100, 116, 139, 0.18);
-        background: rgba(255, 255, 255, 0.76);
+        border-radius: 22px; padding: 0.78rem 0.9rem; min-width: 190px; text-align: right;
+        border: 1px solid rgba(100, 116, 139, 0.18); background: rgba(255, 255, 255, 0.76);
         box-shadow: 0 12px 24px rgba(30, 41, 59, 0.08);
     }
-    .rt-status-pill .rt-label {
-        font-size: 0.68rem;
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
-        color: #64748b;
-        font-weight: 920;
-    }
-    .rt-status-pill .rt-value {
-        margin-top: 0.18rem;
-        font-size: 1.11rem;
-        font-weight: 930;
-        color: #111827;
-        overflow-wrap: anywhere;
-    }
-    .rt-status-warning {
-        background: rgba(255, 251, 235, 0.88);
-        border-color: rgba(217, 119, 6, 0.28);
-    }
-    .rt-status-ok {
-        background: rgba(255, 255, 255, 0.76);
-        border-color: rgba(100, 116, 139, 0.18);
-    }
-    .rt-kpi-grid {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.74rem;
-        margin: 0.5rem 0 0.95rem 0;
-    }
+    .rt-status-pill .rt-label { font-size: 0.68rem; letter-spacing: 0.09em; text-transform: uppercase; color: #64748b; font-weight: 920; }
+    .rt-status-pill .rt-value { margin-top: 0.18rem; font-size: 1.11rem; font-weight: 930; color: #111827; overflow-wrap: anywhere; }
+    .rt-status-warning { background: rgba(255, 251, 235, 0.88); border-color: rgba(217, 119, 6, 0.28); }
+    .rt-status-ok { background: rgba(255, 255, 255, 0.76); border-color: rgba(100, 116, 139, 0.18); }
+    .rt-kpi-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.74rem; margin: 0.5rem 0 0.95rem 0; }
     .rt-kpi {
-        position: relative;
-        overflow: hidden;
-        border: 1px solid rgba(100, 116, 139, 0.16);
-        border-radius: 22px;
-        background: linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 12px 26px rgba(30, 41, 59, 0.07);
-        padding: 1.02rem 1.04rem 0.94rem 1.04rem;
-        min-height: 124px;
+        border: 1px solid rgba(100, 116, 139, 0.16); border-radius: 22px; background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 12px 26px rgba(30, 41, 59, 0.07); padding: 1.02rem 1.04rem 0.94rem 1.04rem; min-height: 124px;
     }
-    .rt-kpi:before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 4px;
-        background: linear-gradient(90deg, #8aa4b8, #b7c6d5, #d8e0e7);
-    }
-    .rt-kpi-label {
-        color: #64748b;
-        font-size: 0.82rem;
-        font-weight: 950;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        margin-bottom: 0.40rem;
-    }
-    .rt-kpi-value {
-        color: #111827;
-        font-size: clamp(1.34rem, 1.85vw, 2.12rem);
-        font-weight: 960;
-        line-height: 1.02;
-        overflow-wrap: anywhere;
-    }
-    .rt-kpi-helper {
-        margin-top: 0.50rem;
-        color: #64748b;
-        font-size: 0.98rem;
-        font-weight: 900;
-        display: inline-flex;
-        align-items: center;
-        width: fit-content;
-        border-radius: 999px;
-        padding: 0.20rem 0.54rem;
-        background: rgba(100, 116, 139, 0.08);
-    }
-    .rt-signal-green {
-        color: #166534;
-        background: #dcfce7;
-        border: 1px solid rgba(22, 101, 52, 0.18);
-    }
-    .rt-signal-red {
-        color: #991b1b;
-        background: #fee2e2;
-        border: 1px solid rgba(153, 27, 27, 0.18);
-    }
-    .rt-signal-amber {
-        color: #92400e;
-        background: #fef3c7;
-        border: 1px solid rgba(146, 64, 14, 0.18);
-    }
-    .rt-signal-muted {
-        color: #64748b;
-        background: rgba(100, 116, 139, 0.08);
-        border: 1px solid rgba(100, 116, 139, 0.12);
-    }
+    .rt-kpi-label { color: #64748b; font-size: 0.82rem; font-weight: 950; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.40rem; }
+    .rt-kpi-value { color: #111827; font-size: clamp(1.34rem, 1.85vw, 2.12rem); font-weight: 960; line-height: 1.02; overflow-wrap: anywhere; }
+    .rt-kpi-helper { margin-top: 0.50rem; color: #64748b; font-size: 0.98rem; font-weight: 900; display: inline-flex; width: fit-content; border-radius: 999px; padding: 0.20rem 0.54rem; background: rgba(100, 116, 139, 0.08); }
+    .rt-signal-green { color: #166534; background: #dcfce7; border: 1px solid rgba(22, 101, 52, 0.18); }
+    .rt-signal-red { color: #991b1b; background: #fee2e2; border: 1px solid rgba(153, 27, 27, 0.18); }
+    .rt-signal-amber { color: #92400e; background: #fef3c7; border: 1px solid rgba(146, 64, 14, 0.18); }
+    .rt-signal-muted { color: #64748b; background: rgba(100, 116, 139, 0.08); border: 1px solid rgba(100, 116, 139, 0.12); }
     .rt-panel {
-        border: 1px solid rgba(100, 116, 139, 0.16);
-        border-radius: 26px;
-        background: linear-gradient(180deg, #ffffff, #f8fafc);
-        box-shadow: 0 14px 30px rgba(30, 41, 59, 0.065);
-        padding: 1.02rem 1.05rem;
-        margin-bottom: 0.85rem;
+        border: 1px solid rgba(100, 116, 139, 0.16); border-radius: 26px; background: linear-gradient(180deg, #ffffff, #f8fafc);
+        box-shadow: 0 14px 30px rgba(30, 41, 59, 0.065); padding: 1.02rem 1.05rem; margin-bottom: 0.85rem;
     }
-    .rt-panel-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        margin-bottom: 0.82rem;
-        padding-bottom: 0.68rem;
-        border-bottom: 1px solid rgba(100, 116, 139, 0.14);
-    }
-    .rt-panel-title {
-        font-size: 1.14rem;
-        font-weight: 950;
-        color: #111827;
-        letter-spacing: -0.025em;
-    }
-    .rt-panel-note {
-        border-radius: 999px;
-        background: rgba(100, 116, 139, 0.09);
-        padding: 0.28rem 0.6rem;
-        color: #475569;
-        font-size: 0.75rem;
-        font-weight: 850;
-    }
-    .rt-field-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.72rem;
-    }
-    .rt-field {
-        border-radius: 18px;
-        background: rgba(241, 245, 249, 0.72);
-        border: 1px solid rgba(100, 116, 139, 0.12);
-        padding: 0.72rem 0.76rem;
-        min-height: 78px;
-    }
-    .rt-field-label {
-        font-size: 0.68rem;
-        color: #64748b;
-        font-weight: 920;
-        text-transform: uppercase;
-        letter-spacing: 0.07em;
-        margin-bottom: 0.24rem;
-    }
-    .rt-field-value {
-        font-size: 1.04rem;
-        font-weight: 950;
-        color: #111827;
-        line-height: 1.14;
-        overflow-wrap: anywhere;
-    }
-    .rt-status-card {
-        border-radius: 24px;
-        padding: 0.98rem 1.02rem;
-        margin-bottom: 0.85rem;
-        border: 1px solid rgba(217, 119, 6, 0.22);
-        background: linear-gradient(135deg, #fffbeb, #ffffff);
-        box-shadow: 0 12px 26px rgba(30, 41, 59, 0.055);
-    }
-    .rt-status-card-warning {
-        background: linear-gradient(135deg, #fffbeb, #ffffff);
-    }
-    .rt-status-card-ok {
-        background: linear-gradient(135deg, #ffffff, #f8fafc);
-        border-color: rgba(100, 116, 139, 0.14);
-    }
-    .rt-status-card-title {
-        font-size: 1.04rem;
-        font-weight: 950;
-        color: #111827;
-        margin-bottom: 0.30rem;
-    }
-    .rt-status-card-body {
-        color: #475569;
-        font-size: 0.93rem;
-        font-weight: 700;
-        line-height: 1.38;
-    }
-    .rt-prompt-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0.56rem;
-    }
-    .rt-prompt {
-        display: grid;
-        grid-template-columns: 34px minmax(0, 1fr);
-        gap: 0.64rem;
-        border-radius: 18px;
-        border: 1px solid rgba(100, 116, 139, 0.14);
-        background: rgba(248, 250, 252, 0.96);
-        padding: 0.72rem 0.74rem;
-    }
-    .rt-prompt-num {
-        width: 32px;
-        height: 32px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 12px;
-        background: #dbe6ee;
-        color: #334155;
-        font-weight: 950;
-        font-size: 0.90rem;
-    }
-    .rt-prompt-text {
-        color: #334155;
-        font-weight: 760;
-        line-height: 1.30;
-        font-size: 0.95rem;
-    }
-    .rt-commentary {
-        border-radius: 20px;
-        border: 1px solid rgba(100, 116, 139, 0.14);
-        background: rgba(255, 255, 255, 0.90);
-        padding: 0.88rem 0.92rem;
-        color: #334155;
-        font-size: 0.96rem;
-        font-weight: 700;
-        line-height: 1.38;
-        white-space: pre-wrap;
-    }
-    @media (max-width: 1100px) {
-        .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .rt-field-grid { grid-template-columns: 1fr; }
-        .rt-hero-top { flex-direction: column; }
-        .rt-status-pill { text-align: left; }
-    }
+    .rt-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.82rem; padding-bottom: 0.68rem; border-bottom: 1px solid rgba(100, 116, 139, 0.14); }
+    .rt-panel-title { font-size: 1.14rem; font-weight: 950; color: #111827; letter-spacing: -0.025em; }
+    .rt-panel-note { border-radius: 999px; background: rgba(100, 116, 139, 0.09); padding: 0.28rem 0.6rem; color: #475569; font-size: 0.75rem; font-weight: 850; }
+    .rt-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.72rem; }
+    .rt-field { border-radius: 18px; background: rgba(241, 245, 249, 0.72); border: 1px solid rgba(100, 116, 139, 0.12); padding: 0.72rem 0.76rem; min-height: 78px; }
+    .rt-field-label { font-size: 0.68rem; color: #64748b; font-weight: 920; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.24rem; }
+    .rt-field-value { font-size: 1.04rem; font-weight: 950; color: #111827; line-height: 1.14; overflow-wrap: anywhere; }
+    .rt-status-card { border-radius: 24px; padding: 0.98rem 1.02rem; margin-bottom: 0.85rem; border: 1px solid rgba(217, 119, 6, 0.22); background: linear-gradient(135deg, #fffbeb, #ffffff); box-shadow: 0 12px 26px rgba(30, 41, 59, 0.055); }
+    .rt-status-card-title { font-size: 1.04rem; font-weight: 950; color: #111827; margin-bottom: 0.30rem; }
+    .rt-status-card-body { color: #475569; font-size: 0.93rem; font-weight: 700; line-height: 1.38; }
+    .rt-prompt-list { display: flex; flex-direction: column; gap: 0.56rem; }
+    .rt-prompt { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 0.64rem; border-radius: 18px; border: 1px solid rgba(100, 116, 139, 0.14); background: rgba(248, 250, 252, 0.96); padding: 0.72rem 0.74rem; }
+    .rt-prompt-num { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: #dbe6ee; color: #334155; font-weight: 950; font-size: 0.90rem; }
+    .rt-prompt-text { color: #334155; font-weight: 760; line-height: 1.30; font-size: 0.95rem; }
+    .rt-commentary { border-radius: 20px; border: 1px solid rgba(100, 116, 139, 0.14); background: rgba(255, 255, 255, 0.90); padding: 0.88rem 0.92rem; color: #334155; font-size: 0.96rem; font-weight: 700; line-height: 1.38; white-space: pre-wrap; }
+    @media (max-width: 1100px) { .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rt-field-grid { grid-template-columns: 1fr; } .rt-hero-top { flex-direction: column; } .rt-status-pill { text-align: left; } }
 </style>
 """
 
@@ -1831,6 +2070,48 @@ def render_html_hero(current_row: pd.Series, current_idx: int, total_count: int)
     )
 
 
+def render_html_loan_modification_panel(current_row: pd.Series) -> None:
+    if not has_loan_mods(current_row):
+        return
+
+    records = current_row.get("loan_mod_records") or []
+    latest = records[0] if records else {}
+
+    render_html_field_panel(
+        "Loan modification snapshot",
+        [
+            ("Latest Mod", current_row.get("loan_mod_latest_type")),
+            ("Mod Status", current_row.get("loan_mod_latest_status")),
+            ("Effective Date", fmt_date(current_row.get("loan_mod_latest_effective_date"))),
+            ("Finalized Date", fmt_date(current_row.get("loan_mod_latest_finalized_date"))),
+            ("Previous Maturity", fmt_date(latest.get("Previous Maturity Date"))),
+            ("Updated Maturity", fmt_date(latest.get("Updated Maturity Date"))),
+            ("Previous Commitment", fmt_money(latest.get("Previous Loan Commitment"), decimals=0)),
+            ("Updated Commitment", fmt_money(latest.get("Updated Loan Commitment"), decimals=0)),
+            ("Previous Rate", fmt_percent(latest.get("Previous Interest Rate"))),
+            ("Updated Rate", fmt_percent(latest.get("Updated Interest Rate"))),
+            ("Modification Fee", fmt_percent(latest.get("Modification Fee %"))),
+            ("Extension Fee", fmt_percent(latest.get("Extension Fee (%)"))),
+        ],
+        note=f"{fmt_int(current_row.get('loan_mod_count'))} mod record(s)",
+    )
+
+    mod_commentary = build_loan_mod_commentary_from_record(latest)
+    if mod_commentary:
+        st.markdown(
+            "<section class='rt-panel'>"
+            "<div class='rt-panel-header'><div class='rt-panel-title'>Loan mod commentary / details</div></div>"
+            f"<div class='rt-commentary'>{html_safe(mod_commentary, blank='No loan mod commentary entered.')}</div>"
+            "</section>",
+            unsafe_allow_html=True,
+        )
+
+    detail_df = build_loan_mod_detail_dataframe(records)
+    if not detail_df.empty:
+        with st.expander("All loan modification records", expanded=False):
+            st.dataframe(detail_df, hide_index=True, use_container_width=True)
+
+
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     apply_presentation_css()
     sync_selected_deal(deck)
@@ -1885,6 +2166,9 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
     maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
     payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
+    loan_mod_count = int(current_row.get("loan_mod_count") or 0)
+    loan_mod_helper = display_text(current_row.get("loan_mod_latest_type"), blank="No mods")
+    loan_mod_signal = "rt-signal-amber" if loan_mod_count else "rt-signal-muted"
 
     render_html_kpi_strip(
         [
@@ -1892,7 +2176,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount", "rt-signal-muted"),
             ("Maturity", fmt_date(current_row.get("maturity_date")), maturity_timing, maturity_signal_class),
             ("Next Payment", fmt_date(current_row.get("next_payment_date")), payment_timing, payment_signal_class),
-            ("Status", display_text(current_row.get("status"), blank="No status"), "Current update", "rt-signal-muted"),
+            ("Loan Mods", fmt_int(loan_mod_count), loan_mod_helper, loan_mod_signal),
         ]
     )
 
@@ -1918,6 +2202,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
     with right:
         render_html_status_check_panel(current_row)
         render_html_commentary_panel(current_row.get("commentary"))
+        render_html_loan_modification_panel(current_row)
 
         with st.expander("Nearby agenda", expanded=False):
             start = max(current_idx - 3, 0)
@@ -1926,6 +2211,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
             agenda_slice.insert(0, "Agenda #", range(start + 1, end + 1))
             agenda_slice["Current"] = agenda_slice["deal_key"].map(lambda value: "Current" if value == deal_key else "")
             agenda_slice["Update Reminder"] = agenda_slice["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
+            agenda_slice["Loan Mods"] = agenda_slice["loan_mod_count"].map(lambda value: fmt_int(value) if int(value or 0) else "")
             agenda_slice["UPB"] = agenda_slice["upb"].map(lambda value: fmt_money(value, decimals=0))
             st.dataframe(
                 agenda_slice[
@@ -1936,6 +2222,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
                         "deal_name",
                         "deal_number",
                         "Update Reminder",
+                        "Loan Mods",
                         "status",
                         "owner",
                         "UPB",
@@ -1953,9 +2240,13 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
                 use_container_width=True,
             )
 
+
+# -----------------------------------------------------------------------------
+# Review and exports
+# -----------------------------------------------------------------------------
 def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
     st.subheader("Review and update")
-    st.caption("Edit Status, Owner, and AM Commentary. Disabled columns are for reference.")
+    st.caption("Edit Status, Owner, and AM Commentary. Loan modification columns are reference-only.")
 
     review_df = build_review_dataframe(deck)
     edited_df = st.data_editor(
@@ -1972,11 +2263,14 @@ def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
             "Next Payment",
             "UPB",
             "Update Reminder",
+            "Loan Mods",
+            "Latest Loan Mod",
         ],
         column_config={
             "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
             "Status": st.column_config.TextColumn("Status", width="medium"),
             "Owner": st.column_config.TextColumn("Owner", width="medium"),
+            "Latest Loan Mod": st.column_config.TextColumn("Latest Loan Mod", width="large"),
         },
     )
 
@@ -2009,6 +2303,8 @@ def render_exports_view(
     workbook_bytes = update_workbook_bytes(file_bytes, ensure_override_store())
     workbook_bytes = write_status_history_sheet_to_workbook_bytes(workbook_bytes, updated_history)
     agenda_bytes = build_agenda_dataframe(deck).to_csv(index=False).encode("utf-8")
+    loan_mod_overview = build_loan_mod_overview_dataframe(deck)
+    loan_mod_bytes = loan_mod_overview.to_csv(index=False).encode("utf-8") if not loan_mod_overview.empty else b""
 
     c1, c2 = st.columns(2)
     with c1:
@@ -2026,6 +2322,14 @@ def render_exports_view(
             file_name="weekly_portfolio_agenda.csv",
             mime="text/csv",
             use_container_width=True,
+        )
+        st.download_button(
+            "Download loan modification details CSV",
+            data=loan_mod_bytes,
+            file_name="weekly_portfolio_loan_modifications.csv",
+            mime="text/csv",
+            use_container_width=True,
+            disabled=(len(loan_mod_bytes) == 0),
         )
 
     with c2:
@@ -2045,8 +2349,8 @@ def render_exports_view(
         )
 
     st.info(
-        "The updated workbook includes the hidden _Status History sheet. Use that workbook or the "
-        "Jupyter weekly overview generator as the normal path; the CSV is only a backup/export."
+        "The updated workbook includes the hidden _Status History sheet and preserves the Loan Modifications sheet. "
+        "Use the Jupyter weekly overview generator as the normal path; CSV files are only backups/exports."
     )
 
     st.subheader("Recommended .gitignore entries")
@@ -2058,6 +2362,10 @@ def render_exports_view(
         language="gitignore",
     )
 
+
+# -----------------------------------------------------------------------------
+# Workbook source and main app
+# -----------------------------------------------------------------------------
 def get_workbook_source() -> Tuple[Optional[bytes], str]:
     uploaded = st.session_state.get("uploaded_workbook")
     if uploaded is not None:
@@ -2070,7 +2378,6 @@ def get_workbook_source() -> Tuple[Optional[bytes], str]:
     return default_path.read_bytes(), default_path.name
 
 
-
 def render_no_workbook_loaded() -> None:
     st.info("Upload a Portfolio Overview workbook from the sidebar to start the meeting deck.")
     st.write("The app expects workbook sheets named Bridge and/or Term with a Deal Number header row.")
@@ -2079,6 +2386,12 @@ def render_no_workbook_loaded() -> None:
         "Status history is automatic when the workbook contains the hidden _Status History sheet "
         "created by the weekly overview generator. A CSV upload remains available in the sidebar only as a backup."
     )
+    st.subheader("Loan modifications")
+    st.write(
+        "Loan modification details load automatically when the uploaded workbook includes a visible "
+        f"{LOAN_MOD_SHEET_NAME!r} sheet with a Deal Number column."
+    )
+
 
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -2108,6 +2421,9 @@ def main() -> None:
     if raw_deck.empty:
         st.warning("No Bridge or Term rows were found in the workbook.")
         return
+
+    loan_mods = load_loan_modifications_from_workbook(file_bytes)
+    raw_deck = add_loan_modification_columns(raw_deck, loan_mods)
 
     deck = apply_overrides(raw_deck, ensure_override_store())
     deck = add_status_staleness_columns(
@@ -2139,7 +2455,6 @@ def main() -> None:
             deck=deck,
             as_of_date=st.session_state.as_of_date,
         )
-
 
 
 if __name__ == "__main__":
