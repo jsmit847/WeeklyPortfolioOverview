@@ -82,8 +82,6 @@ LOAN_MOD_MONEY_COLUMNS = [
 ]
 
 LOAN_MOD_PERCENT_COLUMNS = [
-    "Extension Fee (%)",
-    "Modification Fee %",
     "Previous Exit Fee",
     "Previous Floor",
     "Previous Index Margin",
@@ -99,38 +97,50 @@ LOAN_MOD_PERCENT_COLUMNS = [
 ]
 
 
-# Only these columns are loaded from the Loan Modifications sheet.
-# This keeps the app responsive even if Salesforce returns a larger history table.
-LOAN_MOD_CORE_COLUMNS = [
+# These are the columns the app needs to match loan mods back to the agenda.
+# They stay lightweight and avoid loading the full Salesforce history table.
+LOAN_MOD_REQUIRED_COLUMNS = [
     "Portfolio Overview Match",
+    "Visible Overview Sheet(s)",
     "Deal Number",
     "Deal Name",
     "Opportunity Deal Loan Number",
     "Opportunity Deal Name",
-    "Loan Modification Name",
-    "Status",
-    "Loan Mod Type",
+]
+
+# These are the highlighted fields in the Loan Modifications sheet.
+# They get priority in Overview and Presentation.
+LOAN_MOD_SPOTLIGHT_COLUMNS = [
+    "Loan Mod Order Number",
     "Modification Type",
-    "Mod Reporting Type",
+    "System Task Completed Date",
     "Mod Effective Date",
-    "Modification Finalized Date",
     "Previous Maturity Date",
     "Updated Maturity Date",
     "Previous Loan Commitment",
     "Updated Loan Commitment",
-    "Previous Interest Rate",
-    "Updated Interest Rate",
-    "Modification Fee %",
-    "Extension Fee (%)",
-    "Mod Has Fees",
-    "Mod Has Pay Pik",
-    "Cancellation Reason",
     "Comments",
-    "Mod Reporting Type Comments",
-    "Pay Pik Summary",
+]
+
+# Small set of helper fields used only for sorting and labels.
+LOAN_MOD_SUPPORT_COLUMNS = [
+    "Loan Modification Name",
+    "Status",
+    "Loan Mod Type",
+    "Mod Reporting Type",
+    "Modification Finalized Date",
+    "Deal Type",
     "Last Modified Date",
     "Created Date",
 ]
+
+LOAN_MOD_CORE_COLUMNS = list(
+    dict.fromkeys(
+        LOAN_MOD_REQUIRED_COLUMNS
+        + LOAN_MOD_SPOTLIGHT_COLUMNS
+        + LOAN_MOD_SUPPORT_COLUMNS
+    )
+)
 
 
 
@@ -947,12 +957,9 @@ def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
         "Loan Mod Type",
         "Modification Type",
         "Mod Reporting Type",
-        "Mod Has Fees",
-        "Mod Has Pay Pik",
+        "Loan Mod Order Number",
         "Cancellation Reason",
         "Comments",
-        "Mod Reporting Type Comments",
-        "Pay Pik Summary",
     ]
     for col in text_cols:
         if col in df.columns:
@@ -972,6 +979,7 @@ def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
     sort_cols = [
         col
         for col in [
+            "System Task Completed Date",
             "Modification Finalized Date",
             "Mod Effective Date",
             "Last Modified Date",
@@ -1015,7 +1023,7 @@ def build_loan_mod_summary_from_record(record: Dict[str, object]) -> str:
     mod_type = first_nonblank_value(record.get("Loan Mod Type"), record.get("Modification Type"))
     status = record.get("Status")
     effective = fmt_date(record.get("Mod Effective Date"))
-    finalized = fmt_date(record.get("Modification Finalized Date"))
+    completed = fmt_date(record.get("System Task Completed Date"))
     updated_maturity = fmt_date(record.get("Updated Maturity Date"))
 
     if display_text(mod_type, blank=""):
@@ -1027,8 +1035,8 @@ def build_loan_mod_summary_from_record(record: Dict[str, object]) -> str:
     if effective != "-":
         pieces.append(f"Effective {effective}")
 
-    if finalized != "-":
-        pieces.append(f"Finalized {finalized}")
+    if completed != "-":
+        pieces.append(f"Completed {completed}")
 
     if updated_maturity != "-":
         pieces.append(f"New maturity {updated_maturity}")
@@ -1041,9 +1049,6 @@ def build_loan_mod_commentary_from_record(record: Dict[str, object]) -> str:
 
     for label in [
         "Comments",
-        "Pay Pik Summary",
-        "Cancellation Reason",
-        "Mod Reporting Type Comments",
     ]:
         value = display_text(record.get(label), blank="")
         if value:
@@ -1064,22 +1069,15 @@ def add_loan_modification_columns(deck: pd.DataFrame, loan_mods: pd.DataFrame) -
         "loan_mod_latest_status": "",
         "loan_mod_latest_type": "",
         "loan_mod_latest_name": "",
+        "loan_mod_latest_order_number": "",
         "loan_mod_latest_effective_date": pd.NaT,
+        "loan_mod_latest_completed_date": pd.NaT,
         "loan_mod_latest_finalized_date": pd.NaT,
         "loan_mod_latest_previous_maturity_date": pd.NaT,
         "loan_mod_latest_updated_maturity_date": pd.NaT,
         "loan_mod_latest_previous_commitment": np.nan,
         "loan_mod_latest_updated_commitment": np.nan,
-        "loan_mod_latest_previous_rate": np.nan,
-        "loan_mod_latest_updated_rate": np.nan,
-        "loan_mod_latest_modification_fee": np.nan,
-        "loan_mod_latest_extension_fee": np.nan,
-        "loan_mod_latest_has_fees": "",
-        "loan_mod_latest_has_pay_pik": "",
         "loan_mod_latest_comments": "",
-        "loan_mod_latest_pay_pik_summary": "",
-        "loan_mod_latest_cancellation_reason": "",
-        "loan_mod_latest_reporting_comments": "",
     }
 
     for col, default_value in defaults.items():
@@ -1109,22 +1107,15 @@ def add_loan_modification_columns(deck: pd.DataFrame, loan_mods: pd.DataFrame) -
         out.at[idx, "loan_mod_latest_status"] = display_text(latest_dict.get("Status"), blank="")
         out.at[idx, "loan_mod_latest_type"] = display_text(latest_type, blank="")
         out.at[idx, "loan_mod_latest_name"] = display_text(latest_dict.get("Loan Modification Name"), blank="")
+        out.at[idx, "loan_mod_latest_order_number"] = display_text(latest_dict.get("Loan Mod Order Number"), blank="")
         out.at[idx, "loan_mod_latest_effective_date"] = coerce_datetime_value(latest_dict.get("Mod Effective Date"))
+        out.at[idx, "loan_mod_latest_completed_date"] = coerce_datetime_value(latest_dict.get("System Task Completed Date"))
         out.at[idx, "loan_mod_latest_finalized_date"] = coerce_datetime_value(latest_dict.get("Modification Finalized Date"))
         out.at[idx, "loan_mod_latest_previous_maturity_date"] = coerce_datetime_value(latest_dict.get("Previous Maturity Date"))
         out.at[idx, "loan_mod_latest_updated_maturity_date"] = coerce_datetime_value(latest_dict.get("Updated Maturity Date"))
         out.at[idx, "loan_mod_latest_previous_commitment"] = latest_dict.get("Previous Loan Commitment")
         out.at[idx, "loan_mod_latest_updated_commitment"] = latest_dict.get("Updated Loan Commitment")
-        out.at[idx, "loan_mod_latest_previous_rate"] = latest_dict.get("Previous Interest Rate")
-        out.at[idx, "loan_mod_latest_updated_rate"] = latest_dict.get("Updated Interest Rate")
-        out.at[idx, "loan_mod_latest_modification_fee"] = latest_dict.get("Modification Fee %")
-        out.at[idx, "loan_mod_latest_extension_fee"] = latest_dict.get("Extension Fee (%)")
-        out.at[idx, "loan_mod_latest_has_fees"] = display_text(latest_dict.get("Mod Has Fees"), blank="")
-        out.at[idx, "loan_mod_latest_has_pay_pik"] = display_text(latest_dict.get("Mod Has Pay Pik"), blank="")
         out.at[idx, "loan_mod_latest_comments"] = display_text(latest_dict.get("Comments"), blank="")
-        out.at[idx, "loan_mod_latest_pay_pik_summary"] = display_text(latest_dict.get("Pay Pik Summary"), blank="")
-        out.at[idx, "loan_mod_latest_cancellation_reason"] = display_text(latest_dict.get("Cancellation Reason"), blank="")
-        out.at[idx, "loan_mod_latest_reporting_comments"] = display_text(latest_dict.get("Mod Reporting Type Comments"), blank="")
 
     return out
 
@@ -1134,6 +1125,48 @@ def has_loan_mods(row: pd.Series) -> bool:
         return int(row.get("loan_mod_count") or 0) > 0
     except Exception:
         return False
+
+
+def compact_note(value: object, max_chars: int = 360) -> str:
+    text = display_text(value, blank="")
+    if not text:
+        return ""
+    text = re.sub(r"^Comments\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def build_loan_mod_spotlight_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
+    if deck.empty or "loan_mod_count" not in deck.columns:
+        return pd.DataFrame()
+
+    source = deck[pd.to_numeric(deck["loan_mod_count"], errors="coerce").fillna(0).astype(int) > 0].copy()
+    if source.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in source.iterrows():
+        rows.append(
+            {
+                "Type": display_text(row.get("sheet")),
+                "Deal Name": display_text(row.get("deal_name")),
+                "Deal #": display_text(row.get("deal_number")),
+                "Mod Order #": display_text(row.get("loan_mod_latest_order_number")),
+                "Modification Type": display_text(row.get("loan_mod_latest_type")),
+                "Status": display_text(row.get("loan_mod_latest_status")),
+                "Completed": fmt_date(row.get("loan_mod_latest_completed_date")),
+                "Effective": fmt_date(row.get("loan_mod_latest_effective_date")),
+                "Previous Maturity": fmt_date(row.get("loan_mod_latest_previous_maturity_date")),
+                "Updated Maturity": fmt_date(row.get("loan_mod_latest_updated_maturity_date")),
+                "Previous Commitment": fmt_money(row.get("loan_mod_latest_previous_commitment"), decimals=0),
+                "Updated Commitment": fmt_money(row.get("loan_mod_latest_updated_commitment"), decimals=0),
+                "Comments": compact_note(row.get("loan_mod_latest_comments")),
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 # -----------------------------------------------------------------------------
@@ -1674,6 +1707,20 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
 
     render_status_history_notice(deck)
 
+    loan_mod_spotlight = build_loan_mod_spotlight_dataframe(deck)
+    if not loan_mod_spotlight.empty:
+        st.subheader("Loan modification spotlight")
+        st.caption("Prioritizes the highlighted fields from the Loan Modifications sheet.")
+        st.dataframe(
+            loan_mod_spotlight,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Comments": st.column_config.TextColumn("Comments", width="large"),
+                "Modification Type": st.column_config.TextColumn("Modification Type", width="medium"),
+            },
+        )
+
     if stale_count:
         stale = deck[deck["status_needs_update_prompt"] == True].copy()  # noqa: E712
         st.warning(f"{stale_count} deal(s) have an update reminder before the meeting is closed.")
@@ -1863,6 +1910,12 @@ PRESENTATION_CSS = """
     .rt-prompt-num { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: #dbe6ee; color: #334155; font-weight: 950; font-size: 0.90rem; }
     .rt-prompt-text { color: #334155; font-weight: 760; line-height: 1.30; font-size: 0.95rem; }
     .rt-commentary { border-radius: 20px; border: 1px solid rgba(100, 116, 139, 0.14); background: rgba(255, 255, 255, 0.90); padding: 0.88rem 0.92rem; color: #334155; font-size: 0.96rem; font-weight: 700; line-height: 1.38; white-space: pre-wrap; }
+    .rt-mod-notes { display: flex; flex-direction: column; gap: 0.66rem; }
+    .rt-mod-note { border-radius: 18px; border: 1px solid rgba(100, 116, 139, 0.14); background: rgba(255, 255, 255, 0.94); padding: 0.78rem 0.84rem; }
+    .rt-mod-note-label { color: #475569; font-size: 0.72rem; font-weight: 950; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.36rem; }
+    .rt-mod-note-body { color: #1f2937; font-size: 0.94rem; font-weight: 760; line-height: 1.42; overflow-wrap: anywhere; }
+    .rt-mod-note-list { margin: 0.18rem 0 0 1.12rem; padding-left: 0.72rem; color: #1f2937; font-size: 0.94rem; font-weight: 760; line-height: 1.38; }
+    .rt-mod-note-list li { margin-bottom: 0.34rem; padding-left: 0.08rem; }
     @media (max-width: 1100px) { .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rt-field-grid { grid-template-columns: 1fr; } .rt-hero-top { flex-direction: column; } .rt-status-pill { text-align: left; } }
 </style>
 """
@@ -2056,18 +2109,66 @@ def render_html_hero(current_row: pd.Series, current_idx: int, total_count: int)
     )
 
 
-def build_loan_mod_commentary_from_current_row(current_row: pd.Series) -> str:
-    sections = []
-    for label, column_name in [
-        ("Comments", "loan_mod_latest_comments"),
-        ("Pay Pik Summary", "loan_mod_latest_pay_pik_summary"),
-        ("Cancellation Reason", "loan_mod_latest_cancellation_reason"),
-        ("Mod Reporting Type Comments", "loan_mod_latest_reporting_comments"),
-    ]:
-        value = display_text(current_row.get(column_name), blank="")
-        if value:
-            sections.append(f"{label}: {value}")
-    return "\n\n".join(sections)
+def split_loan_mod_note_lines(label: str, value: object) -> List[str]:
+    text = display_text(value, blank="")
+    if not text:
+        return []
+
+    # Remove duplicated field labels from Salesforce text, for example "Comments: ...".
+    text = re.sub(rf"^{re.escape(label)}\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+
+    # Turn common Salesforce note separators into readable bullets.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\s+[-–—](?=[A-Za-z0-9$])", "\n", text)
+    text = re.sub(r"\s*[•]\s+", "\n", text)
+    text = re.sub(r"\s+(?=\d+\.\s+[A-Za-z$])", "\n", text)
+    text = re.sub(r"\s+\(([ivxlcdm]+)\)\s*", r"\n(\1) ", text, flags=re.IGNORECASE)
+
+    raw_lines = []
+    for chunk in text.split("\n"):
+        chunk = chunk.strip(" -–—;\t")
+        chunk = re.sub(r"^\d+\.\s*", "", chunk)
+        chunk = re.sub(r"^\(([ivxlcdm]+)\)\s*", "", chunk, flags=re.IGNORECASE)
+        if chunk:
+            raw_lines.append(chunk)
+
+    if not raw_lines and text:
+        raw_lines = [text]
+
+    return raw_lines
+
+
+def loan_mod_note_section_html(label: str, value: object) -> str:
+    lines = split_loan_mod_note_lines(label, value)
+    if not lines:
+        return ""
+
+    if len(lines) == 1:
+        body_html = f"<div class='rt-mod-note-body'>{html_safe(lines[0])}</div>"
+    else:
+        items_html = "".join(f"<li>{html_safe(line)}</li>" for line in lines)
+        body_html = f"<ul class='rt-mod-note-list'>{items_html}</ul>"
+
+    return (
+        "<div class='rt-mod-note'>"
+        f"<div class='rt-mod-note-label'>{html_safe(label)}</div>"
+        f"{body_html}"
+        "</div>"
+    )
+
+
+def render_html_loan_mod_notes_panel(current_row: pd.Series) -> None:
+    html_block = loan_mod_note_section_html("Comments", current_row.get("loan_mod_latest_comments"))
+    if not html_block:
+        return
+
+    st.markdown(
+        "<section class='rt-panel'>"
+        "<div class='rt-panel-header'><div class='rt-panel-title'>Highlighted loan mod comments</div></div>"
+        f"<div class='rt-mod-notes'>{html_block}</div>"
+        "</section>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_html_loan_modification_panel(current_row: pd.Series) -> None:
@@ -2075,33 +2176,22 @@ def render_html_loan_modification_panel(current_row: pd.Series) -> None:
         return
 
     render_html_field_panel(
-        "Loan modification snapshot",
+        "Loan modification spotlight",
         [
-            ("Latest Mod", current_row.get("loan_mod_latest_type")),
+            ("Modification Type", current_row.get("loan_mod_latest_type")),
             ("Mod Status", current_row.get("loan_mod_latest_status")),
+            ("Mod Order #", current_row.get("loan_mod_latest_order_number")),
+            ("Completed Date", fmt_date(current_row.get("loan_mod_latest_completed_date"))),
             ("Effective Date", fmt_date(current_row.get("loan_mod_latest_effective_date"))),
-            ("Finalized Date", fmt_date(current_row.get("loan_mod_latest_finalized_date"))),
             ("Previous Maturity", fmt_date(current_row.get("loan_mod_latest_previous_maturity_date"))),
             ("Updated Maturity", fmt_date(current_row.get("loan_mod_latest_updated_maturity_date"))),
             ("Previous Commitment", fmt_money(current_row.get("loan_mod_latest_previous_commitment"), decimals=0)),
             ("Updated Commitment", fmt_money(current_row.get("loan_mod_latest_updated_commitment"), decimals=0)),
-            ("Previous Rate", fmt_percent(current_row.get("loan_mod_latest_previous_rate"))),
-            ("Updated Rate", fmt_percent(current_row.get("loan_mod_latest_updated_rate"))),
-            ("Modification Fee", fmt_percent(current_row.get("loan_mod_latest_modification_fee"))),
-            ("Extension Fee", fmt_percent(current_row.get("loan_mod_latest_extension_fee"))),
         ],
         note=f"{fmt_int(current_row.get('loan_mod_count'))} mod record(s)",
     )
 
-    mod_commentary = build_loan_mod_commentary_from_current_row(current_row)
-    if mod_commentary:
-        st.markdown(
-            "<section class='rt-panel'>"
-            "<div class='rt-panel-header'><div class='rt-panel-title'>Loan mod commentary / details</div></div>"
-            f"<div class='rt-commentary'>{html_safe(mod_commentary, blank='No loan mod commentary entered.')}</div>"
-            "</section>",
-            unsafe_allow_html=True,
-        )
+    render_html_loan_mod_notes_panel(current_row)
 
 
 def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
@@ -2193,8 +2283,10 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
     with right:
         render_html_status_check_panel(current_row)
-        render_html_commentary_panel(current_row.get("commentary"))
-        render_html_loan_modification_panel(current_row)
+        if has_loan_mods(current_row):
+            render_html_loan_modification_panel(current_row)
+        else:
+            render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
             start = max(current_idx - 3, 0)
