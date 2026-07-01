@@ -2289,11 +2289,12 @@ def render_presentation_loan_mods_top(
     loan_mods: pd.DataFrame,
     deal_key: str,
 ) -> None:
-    """Loan modifications section at the very top of the presentation.
+    """Loan modifications section, shown just below the KPI strip.
 
-    When a loan carries more than one modification, a segmented control lets the
-    presenter toggle between each modification. The detail panel below reflects
-    whichever modification is selected.
+    The whole section is a collapsible dropdown (expander). When a loan carries
+    more than one modification, the presenter can switch between them using either
+    the button toggle or the dropdown selector; both stay in sync. The detail
+    panel below always reflects whichever modification is selected.
     """
     mods = loan_mods_for_deal(loan_mods, current_row.get("deal_number"))
     if mods.empty:
@@ -2301,28 +2302,52 @@ def render_presentation_loan_mods_top(
 
     total = len(mods)
     labels = build_loan_mod_toggle_labels(mods)
-    selected_pos = 0
 
-    with st.container(border=True):
-        st.markdown(
-            "<div class='rt-mod-banner'>"
-            "<div class='rt-mod-banner-title'>Loan modifications</div>"
-            f"<div class='rt-mod-banner-note'>{fmt_int(total)} modification record(s) on this loan</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
+    with st.expander(f"Loan modifications ({fmt_int(total)} on this loan)", expanded=True):
         if total > 1:
-            widget_key = f"loanmod_toggle::{deal_key}"
-            chosen = st.segmented_control(
-                "Toggle between modifications",
-                options=labels,
-                default=labels[0],
-                key=widget_key,
-            )
-            selected_pos = labels.index(chosen) if chosen in labels else 0
+            # A single shared position drives both the button toggle and the
+            # dropdown, so changing one immediately updates the other.
+            canon_key = f"loanmod_pos::{deal_key}"
+            seg_key = f"loanmod_seg::{deal_key}"
+            sel_key = f"loanmod_sel::{deal_key}"
+
+            canonical = min(max(int(st.session_state.get(canon_key, 0) or 0), 0), total - 1)
+            st.session_state[canon_key] = canonical
+
+            def _sync_from_seg() -> None:
+                value = st.session_state.get(seg_key)
+                if value in labels:
+                    st.session_state[canon_key] = labels.index(value)
+
+            def _sync_from_sel() -> None:
+                value = st.session_state.get(sel_key)
+                if value in labels:
+                    st.session_state[canon_key] = labels.index(value)
+
+            # Preseed both widgets so they always reflect the shared selection.
+            st.session_state[seg_key] = labels[canonical]
+            st.session_state[sel_key] = labels[canonical]
+
+            switch_left, switch_right = st.columns([0.62, 0.38], vertical_alignment="center")
+            with switch_left:
+                st.segmented_control(
+                    "Toggle between modifications",
+                    options=labels,
+                    key=seg_key,
+                    on_change=_sync_from_seg,
+                )
+            with switch_right:
+                st.selectbox(
+                    "Or pick from dropdown",
+                    options=labels,
+                    key=sel_key,
+                    on_change=_sync_from_sel,
+                )
+
+            selected_pos = min(max(int(st.session_state.get(canon_key, 0) or 0), 0), total - 1)
         else:
             st.caption(f"Single modification on file: {labels[0]}")
+            selected_pos = 0
 
         record = mods.iloc[selected_pos].to_dict()
         render_html_loan_modification_record(record, selected_pos + 1, total)
@@ -2379,10 +2404,6 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
 
     render_html_hero(current_row, current_idx, total_count)
 
-    # Loan modifications moved to the top, with a toggle to switch between each
-    # modification on the current loan.
-    render_presentation_loan_mods_top(current_row, loan_mods, deal_key)
-
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
     maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
     payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
@@ -2399,6 +2420,10 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
             ("Loan Mods", fmt_int(loan_mod_count), loan_mod_helper, loan_mod_signal),
         ]
     )
+
+    # KPIs first, then the collapsible loan modifications section with the
+    # button/dropdown toggle to switch between each modification on the loan.
+    render_presentation_loan_mods_top(current_row, loan_mods, deal_key)
 
     left, right = st.columns([1.34, 0.86], gap="large", vertical_alignment="top")
 
