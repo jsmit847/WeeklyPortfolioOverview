@@ -976,9 +976,16 @@ def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     df["deal_number_key"] = df["Deal Number"].map(norm_text)
 
+    # Numeric helper for order-number sorting (falls back to date sorting below).
+    if "Loan Mod Order Number" in df.columns:
+        df["_mod_order_sort"] = pd.to_numeric(df["Loan Mod Order Number"], errors="coerce")
+    else:
+        df["_mod_order_sort"] = np.nan
+
     sort_cols = [
         col
         for col in [
+            "_mod_order_sort",
             "System Task Completed Date",
             "Modification Finalized Date",
             "Mod Effective Date",
@@ -989,6 +996,7 @@ def normalize_loan_modifications(raw_df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     if sort_cols:
+        # Latest modification first (highest order number / most recent dates).
         df = df.sort_values(
             ["deal_number_key"] + sort_cols,
             ascending=[True] + [False] * len(sort_cols),
@@ -1055,6 +1063,44 @@ def build_loan_mod_commentary_from_record(record: Dict[str, object]) -> str:
             sections.append(f"{label}: {value}")
 
     return "\n\n".join(sections)
+
+
+def loan_mods_for_deal(loan_mods: pd.DataFrame, deal_number: object) -> pd.DataFrame:
+    """Return every loan modification record for a single deal, latest first.
+
+    This is what powers the presentation toggle, so the caller can step through
+    each modification on a loan rather than seeing only the most recent one.
+    """
+    if loan_mods is None or loan_mods.empty or "deal_number_key" not in loan_mods.columns:
+        return pd.DataFrame()
+
+    key = norm_text(deal_number)
+    if not key:
+        return pd.DataFrame()
+
+    subset = loan_mods[loan_mods["deal_number_key"] == key].copy()
+    return subset.reset_index(drop=True)
+
+
+def build_loan_mod_toggle_labels(mods: pd.DataFrame) -> List[str]:
+    """Short, unique labels for toggling between each modification of one deal."""
+    labels: List[str] = []
+    seen: Dict[str, int] = {}
+
+    for position, (_, record) in enumerate(mods.iterrows(), start=1):
+        order = display_text(record.get("Loan Mod Order Number"), blank="")
+        base = f"Mod #{order}" if order else f"Mod {position}"
+
+        # Guarantee uniqueness so the toggle control always has distinct options.
+        if base in seen:
+            seen[base] += 1
+            base = f"{base} ({seen[base]})"
+        else:
+            seen[base] = 1
+
+        labels.append(base)
+
+    return labels
 
 
 def add_loan_modification_columns(deck: pd.DataFrame, loan_mods: pd.DataFrame) -> pd.DataFrame:
@@ -1153,6 +1199,7 @@ def build_loan_mod_spotlight_dataframe(deck: pd.DataFrame) -> pd.DataFrame:
                 "Type": display_text(row.get("sheet")),
                 "Deal Name": display_text(row.get("deal_name")),
                 "Deal #": display_text(row.get("deal_number")),
+                "Mod Count": fmt_int(row.get("loan_mod_count")),
                 "Mod Order #": display_text(row.get("loan_mod_latest_order_number")),
                 "Modification Type": display_text(row.get("loan_mod_latest_type")),
                 "Status": display_text(row.get("loan_mod_latest_status")),
@@ -1710,7 +1757,7 @@ def render_overview_view(deck: pd.DataFrame, as_of_date: dt.date) -> None:
     loan_mod_spotlight = build_loan_mod_spotlight_dataframe(deck)
     if not loan_mod_spotlight.empty:
         st.subheader("Loan modification spotlight")
-        st.caption("Prioritizes the highlighted fields from the Loan Modifications sheet.")
+        st.caption("Prioritizes the highlighted fields from the Loan Modifications sheet. Shows the latest mod per deal; use Presentation to toggle through every modification.")
         st.dataframe(
             loan_mod_spotlight,
             hide_index=True,
@@ -1916,6 +1963,9 @@ PRESENTATION_CSS = """
     .rt-mod-note-body { color: #1f2937; font-size: 0.94rem; font-weight: 760; line-height: 1.42; overflow-wrap: anywhere; }
     .rt-mod-note-list { margin: 0.18rem 0 0 1.12rem; padding-left: 0.72rem; color: #1f2937; font-size: 0.94rem; font-weight: 760; line-height: 1.38; }
     .rt-mod-note-list li { margin-bottom: 0.34rem; padding-left: 0.08rem; }
+    .rt-mod-banner { border-radius: 22px; border: 1px solid rgba(146, 64, 14, 0.20); background: linear-gradient(135deg, #fffbeb 0%, #ffffff 70%); box-shadow: 0 12px 26px rgba(30, 41, 59, 0.06); padding: 0.72rem 0.92rem; margin: 0.2rem 0 0.6rem 0; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+    .rt-mod-banner-title { font-size: 1.02rem; font-weight: 950; color: #111827; letter-spacing: -0.02em; }
+    .rt-mod-banner-note { border-radius: 999px; background: rgba(146, 64, 14, 0.10); color: #92400e; padding: 0.26rem 0.62rem; font-size: 0.78rem; font-weight: 900; }
     @media (max-width: 1100px) { .rt-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rt-field-grid { grid-template-columns: 1fr; } .rt-hero-top { flex-direction: column; } .rt-status-pill { text-align: left; } }
 </style>
 """
@@ -2194,7 +2244,91 @@ def render_html_loan_modification_panel(current_row: pd.Series) -> None:
     render_html_loan_mod_notes_panel(current_row)
 
 
-def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+def render_html_loan_modification_record(
+    record: Dict[str, object],
+    position: int,
+    total: int,
+) -> None:
+    """Render one specific modification record (used by the presentation toggle)."""
+    mod_type = first_nonblank_value(
+        record.get("Modification Type"),
+        record.get("Loan Mod Type"),
+        record.get("Mod Reporting Type"),
+    )
+
+    render_html_field_panel(
+        "Loan modification detail",
+        [
+            ("Modification Type", mod_type),
+            ("Mod Status", record.get("Status")),
+            ("Mod Order #", record.get("Loan Mod Order Number")),
+            ("Completed Date", fmt_date(record.get("System Task Completed Date"))),
+            ("Effective Date", fmt_date(record.get("Mod Effective Date"))),
+            ("Finalized Date", fmt_date(record.get("Modification Finalized Date"))),
+            ("Previous Maturity", fmt_date(record.get("Previous Maturity Date"))),
+            ("Updated Maturity", fmt_date(record.get("Updated Maturity Date"))),
+            ("Previous Commitment", fmt_money(record.get("Previous Loan Commitment"), decimals=0)),
+            ("Updated Commitment", fmt_money(record.get("Updated Loan Commitment"), decimals=0)),
+        ],
+        note=f"Showing modification {position} of {total}",
+    )
+
+    comments_html = loan_mod_note_section_html("Comments", record.get("Comments"))
+    if comments_html:
+        st.markdown(
+            "<section class='rt-panel'>"
+            "<div class='rt-panel-header'><div class='rt-panel-title'>Highlighted loan mod comments</div></div>"
+            f"<div class='rt-mod-notes'>{comments_html}</div>"
+            "</section>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_presentation_loan_mods_top(
+    current_row: pd.Series,
+    loan_mods: pd.DataFrame,
+    deal_key: str,
+) -> None:
+    """Loan modifications section at the very top of the presentation.
+
+    When a loan carries more than one modification, a segmented control lets the
+    presenter toggle between each modification. The detail panel below reflects
+    whichever modification is selected.
+    """
+    mods = loan_mods_for_deal(loan_mods, current_row.get("deal_number"))
+    if mods.empty:
+        return
+
+    total = len(mods)
+    labels = build_loan_mod_toggle_labels(mods)
+    selected_pos = 0
+
+    with st.container(border=True):
+        st.markdown(
+            "<div class='rt-mod-banner'>"
+            "<div class='rt-mod-banner-title'>Loan modifications</div>"
+            f"<div class='rt-mod-banner-note'>{fmt_int(total)} modification record(s) on this loan</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        if total > 1:
+            widget_key = f"loanmod_toggle::{deal_key}"
+            chosen = st.segmented_control(
+                "Toggle between modifications",
+                options=labels,
+                default=labels[0],
+                key=widget_key,
+            )
+            selected_pos = labels.index(chosen) if chosen in labels else 0
+        else:
+            st.caption(f"Single modification on file: {labels[0]}")
+
+        record = mods.iloc[selected_pos].to_dict()
+        render_html_loan_modification_record(record, selected_pos + 1, total)
+
+
+def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mods: pd.DataFrame) -> None:
     apply_presentation_css()
     sync_selected_deal(deck)
     current_row = get_selected_row(deck)
@@ -2245,6 +2379,10 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
     render_html_hero(current_row, current_idx, total_count)
 
+    # Loan modifications moved to the top, with a toggle to switch between each
+    # modification on the current loan.
+    render_presentation_loan_mods_top(current_row, loan_mods, deal_key)
+
     funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
     maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
     payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
@@ -2283,10 +2421,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None
 
     with right:
         render_html_status_check_panel(current_row)
-        if has_loan_mods(current_row):
-            render_html_loan_modification_panel(current_row)
-        else:
-            render_html_commentary_panel(current_row.get("commentary"))
+        render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
             start = max(current_idx - 3, 0)
@@ -2515,7 +2650,7 @@ def main() -> None:
     if selected_view == "Overview":
         render_overview_view(filtered_deck, st.session_state.as_of_date)
     elif selected_view == "Presentation":
-        render_presentation_view(filtered_deck, raw_deck)
+        render_presentation_view(filtered_deck, raw_deck, loan_mods)
     elif selected_view == "Review":
         render_review_view(filtered_deck, raw_deck)
     elif selected_view == "Exports":
