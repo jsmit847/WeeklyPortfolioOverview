@@ -2404,7 +2404,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
 
     render_html_hero(current_row, current_idx, total_count)
 
-    funded_kpi_value = first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount"))
+    commitment_kpi_value = current_row.get("commitment")
     maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
     payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
     loan_mod_count = int(current_row.get("loan_mod_count") or 0)
@@ -2414,7 +2414,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
     render_html_kpi_strip(
         [
             ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance", "rt-signal-muted"),
-            ("Funded Amount", fmt_money(funded_kpi_value, decimals=0), "Funded / loan amount", "rt-signal-muted"),
+            ("Loan Commitment", fmt_money(commitment_kpi_value, decimals=0), "Total commitment", "rt-signal-muted"),
             ("Maturity", fmt_date(current_row.get("maturity_date")), maturity_timing, maturity_signal_class),
             ("Next Payment", fmt_date(current_row.get("next_payment_date")), payment_timing, payment_signal_class),
             ("Loan Mods", fmt_int(loan_mod_count), loan_mod_helper, loan_mod_signal),
