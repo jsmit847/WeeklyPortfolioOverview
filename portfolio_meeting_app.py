@@ -41,6 +41,24 @@ STATUS_HISTORY_COLUMNS = [
 
 DATE_HDR = re.compile(r"^\s*(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\s+(.*\S)\s*$")
 
+# Header candidates for loan size, in priority order. Term (DSCR) loans fund in full at
+# closing, so when a Term sheet has no explicit commitment column the original loan
+# amount is the commitment.
+COMMITMENT_HEADER_CANDIDATES = (
+    "Loan Commitment",
+    "Total Commitment",
+    "Total Loan Commitment",
+    "Commitment",
+)
+LOAN_AMOUNT_HEADER_CANDIDATES = (
+    "Loan Amount",
+    "Original Loan Amount",
+    "Original Balance",
+    "Original Principal Balance",
+    "Orig Loan Amount",
+    "Note Amount",
+)
+
 COMMON_STATUS_SUGGESTIONS = [
     "Surveillance",
     "Upcoming Maturity",
@@ -796,19 +814,27 @@ def load_portfolio_workbook(
         else:
             df["days_past_due"] = 0
 
+        commitment_col = resolve_column(df.columns, *COMMITMENT_HEADER_CANDIDATES)
+        explicit_commitment = safe_numeric_series(df, commitment_col)
+
         if sheet_name == "Bridge":
             funded_amount_col = resolve_column(df.columns, "Active Funded Amount")
-            commitment_col = resolve_column(df.columns, "Loan Commitment")
             remaining_commitment_col = resolve_column(df.columns, "Remaining Commitment")
             df["funded_amount"] = safe_numeric_series(df, funded_amount_col)
-            df["commitment"] = safe_numeric_series(df, commitment_col)
+            df["commitment"] = explicit_commitment
+            df["commitment_source"] = np.where(explicit_commitment.notna(), "Total commitment", "")
             df["remaining_commitment"] = safe_numeric_series(df, remaining_commitment_col)
             df["loan_amount"] = np.nan
         else:
-            loan_amount_col = resolve_column(df.columns, "Loan Amount")
+            loan_amount_col = resolve_column(df.columns, *LOAN_AMOUNT_HEADER_CANDIDATES)
             df["loan_amount"] = safe_numeric_series(df, loan_amount_col)
             df["funded_amount"] = np.nan
-            df["commitment"] = np.nan
+            df["commitment"] = explicit_commitment.fillna(df["loan_amount"])
+            df["commitment_source"] = np.where(
+                explicit_commitment.notna(),
+                "Total commitment",
+                np.where(df["loan_amount"].notna(), "Original loan amount", ""),
+            )
             df["remaining_commitment"] = np.nan
 
         metadata[sheet_name] = {
@@ -1678,6 +1704,12 @@ def process_status_history_upload() -> None:
 # -----------------------------------------------------------------------------
 # Standard Streamlit controls and overview
 # -----------------------------------------------------------------------------
+def reset_filters() -> None:
+    st.session_state.sheet_filter = "All"
+    st.session_state.search_query = ""
+    st.session_state.stale_only = False
+
+
 def render_controls_bar(workbook_name: str) -> None:
     with st.sidebar:
         st.title(APP_TITLE)
@@ -1704,11 +1736,9 @@ def render_controls_bar(workbook_name: str) -> None:
         st.text_input("Search deal # / name / borrower / loan mod", key="search_query")
         st.toggle("Update reminders only", key="stale_only")
 
-        if st.button("Reset filters", use_container_width=True):
-            st.session_state.sheet_filter = "All"
-            st.session_state.search_query = ""
-            st.session_state.stale_only = False
-            st.rerun()
+        # Widget-backed keys can only be reassigned from a callback, which runs before
+        # the widgets are created on the next rerun.
+        st.button("Reset filters", use_container_width=True, on_click=reset_filters)
 
 
 def render_status_history_notice(deck: pd.DataFrame) -> None:
@@ -2123,7 +2153,7 @@ def build_capital_items(current_row: pd.Series) -> List[Tuple[str, object]]:
 
     return [
         ("UPB", fmt_money(current_row.get("upb"), decimals=0)),
-        ("Funded Amount", fmt_money(first_nonblank_value(current_row.get("funded_amount"), current_row.get("loan_amount")), decimals=0)),
+        ("Loan Commitment", fmt_money(current_row.get("commitment"), decimals=0)),
         ("Loan Amount", fmt_money(current_row.get("loan_amount"), decimals=0)),
         ("Maturity Date", fmt_date(current_row.get("maturity_date"))),
         ("Next Payment Date", fmt_date(current_row.get("next_payment_date"))),
@@ -2405,6 +2435,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
     render_html_hero(current_row, current_idx, total_count)
 
     commitment_kpi_value = current_row.get("commitment")
+    commitment_helper = display_text(current_row.get("commitment_source"), blank="Not in workbook")
     maturity_timing, maturity_signal_class = timing_signal(current_row.get("days_to_maturity"))
     payment_timing, payment_signal_class = timing_signal(current_row.get("days_to_next_payment"))
     loan_mod_count = int(current_row.get("loan_mod_count") or 0)
@@ -2414,7 +2445,7 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
     render_html_kpi_strip(
         [
             ("UPB", fmt_money(current_row.get("upb"), decimals=0), "Current balance", "rt-signal-muted"),
-            ("Loan Commitment", fmt_money(commitment_kpi_value, decimals=0), "Total commitment", "rt-signal-muted"),
+            ("Loan Commitment", fmt_money(commitment_kpi_value, decimals=0), commitment_helper, "rt-signal-muted"),
             ("Maturity", fmt_date(current_row.get("maturity_date")), maturity_timing, maturity_signal_class),
             ("Next Payment", fmt_date(current_row.get("next_payment_date")), payment_timing, payment_signal_class),
             ("Loan Mods", fmt_int(loan_mod_count), loan_mod_helper, loan_mod_signal),
