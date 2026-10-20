@@ -2,3 +2,13 @@ status_history.csv
 *_status_history.csv
 weekly_portfolio_status_history*.csv
 *.xlsx
+
+# Credentials, local meeting records and generated files
+.streamlit/secrets.toml
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+wpo_recovery*.json
+.wpo/
+*.log

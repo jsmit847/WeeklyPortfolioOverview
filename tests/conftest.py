@@ -45,6 +45,7 @@ COUNTERS_MODULE = "wpo_test_counters"
 def load_app_module(name: str = "wpo_app"):
     spec = importlib.util.spec_from_file_location(name, APP_PATH)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -106,7 +107,9 @@ def make_at(tmp_path, monkeypatch) -> Callable[..., AppTest]:
         **variants,
     ) -> AppTest:
         _write_workbook(tmp_path, monkeypatch, workbook_bytes, file_name, variants, as_of)
-        return AppTest.from_file(str(APP_PATH), default_timeout=120)
+        at = AppTest.from_file(str(APP_PATH), default_timeout=120)
+        at.session_state['meeting_date'] = AS_OF
+        return at
 
     return _make
 
@@ -125,6 +128,7 @@ def _patched_script(app_path, module_name, count, raise_in):
     if module is None:
         spec = importlib.util.spec_from_file_location(module_name, app_path)
         module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
         sys.modules[module_name] = module
         for name in count:
@@ -161,7 +165,7 @@ def patched_at(tmp_path, monkeypatch):
         _write_workbook(tmp_path, monkeypatch, workbook_bytes, file_name, variants)
         module_name = f"wpo_patched_{uuid.uuid4().hex[:8]}"
         created.append(module_name)
-        return AppTest.from_function(
+        at = AppTest.from_function(
             _patched_script,
             default_timeout=120,
             kwargs={
@@ -171,6 +175,9 @@ def patched_at(tmp_path, monkeypatch):
                 "raise_in": tuple(raise_in),
             },
         )
+
+        at.session_state['meeting_date'] = AS_OF
+        return at
 
     _make.calls = counters.calls  # type: ignore[attr-defined]
     yield _make

@@ -12,6 +12,7 @@ import os
 import posixpath
 import re
 import secrets
+import sys
 import time
 import traceback
 import urllib.parse
@@ -28,8 +29,16 @@ import streamlit as st
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
+import landgorilla_live as live_data
+import meeting_workspace as meeting_work
+import portfolio_cockpit as cockpit
+import portfolio_data_views as data_views
+import portfolio_exports as verified_exports
+import portfolio_shell as shell
+
 
 APP_TITLE = "Weekly Portfolio Meeting Deck"
+APP_VERSION = "2.7.0"
 APP_DIR = Path(__file__).resolve().parent
 
 # Privacy-safe event log: key=value events with counts, sha prefixes and deal keys only
@@ -38,12 +47,7 @@ LOG = logging.getLogger("wpo")
 
 # An explicit workbook path (tests, local demos) wins over the files below.
 DEFAULT_WORKBOOK_ENV = "WPO_DEFAULT_WORKBOOK"
-DEFAULT_SAMPLE_FILES = [
-    APP_DIR / "Portfolio Overview 3.31.26.xlsx",
-    APP_DIR / "portfolio_overview.xlsx",
-    Path("Portfolio Overview 3.31.26.xlsx"),
-    Path("portfolio_overview.xlsx"),
-]
+DEFAULT_SAMPLE_FILES = [Path('portfolio_overview.xlsx'), APP_DIR / 'portfolio_overview.xlsx']
 
 # Optional local file. Do not commit real deal-level history to a public repo.
 STATUS_HISTORY_PATH = APP_DIR / "status_history.csv"
@@ -329,7 +333,7 @@ LOAN_MOD_TYPE_FIELDS = ("Modification Type", "Loan Mod Type", "Mod Reporting Typ
 # -----------------------------------------------------------------------------
 # Meeting edits, filters, dialogs and error boundaries
 # -----------------------------------------------------------------------------
-VIEW_OPTIONS = ("Overview", "Presentation", "Review", "Exports")
+VIEW_OPTIONS = tuple(shell.VIEWS)
 SHEET_FILTER_OPTIONS = ("All", "Bridge", "Term")
 SEARCH_LABEL = "Search deal #, name, borrower, owner, status, commentary"
 # Searched literally and case-insensitively (never as a regex).
@@ -1112,10 +1116,10 @@ def normalize_status_history(history_df: Optional[pd.DataFrame]) -> pd.DataFrame
 
 def read_status_history_csv(file_obj) -> pd.DataFrame:
     try:
-        df = pd.read_csv(file_obj)
+        df = pd.read_csv(file_obj, dtype=str, keep_default_na=False)
     except UnicodeDecodeError:
         file_obj.seek(0)
-        df = pd.read_csv(file_obj, encoding="latin-1")
+        df = pd.read_csv(file_obj, encoding="latin-1", dtype=str, keep_default_na=False)
     return normalize_status_history(df)
 
 
@@ -1149,7 +1153,7 @@ def load_default_status_history_once() -> None:
         return
 
     try:
-        history = pd.read_csv(STATUS_HISTORY_PATH)
+        history = pd.read_csv(STATUS_HISTORY_PATH, dtype=str, keep_default_na=False)
         store_status_history(normalize_status_history(history), STATUS_HISTORY_PATH.name)
     except Exception as exc:
         st.session_state.status_history_load_error = str(exc)
@@ -1171,7 +1175,7 @@ def current_status_history_snapshot(
     snapshot = source[["sheet", "deal_number", "deal_key", "status", "owner", "commentary"]].copy()
     snapshot.insert(0, "meeting_date", meeting_date.isoformat())
     snapshot["workbook_name"] = workbook_name
-    snapshot["saved_at"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    snapshot["saved_at"] = now_text()
     snapshot["status"] = snapshot["status"].map(norm_label)
     snapshot = snapshot[snapshot["status"] != ""].copy()
     return normalize_status_history(snapshot)
@@ -1236,39 +1240,15 @@ def load_embedded_status_history_if_available(
     st.session_state.embedded_status_history_signature = signature
 
     if embedded.empty:
+        store_status_history(empty_status_history(), "")
         return
 
     store_status_history(embedded, f"Embedded in {workbook_name}")
 
 
 def write_status_history_sheet_to_workbook_bytes(file_bytes: bytes, history_df: pd.DataFrame) -> bytes:
-    """Embed status history directly inside the workbook as a hidden sheet."""
-    history = normalize_status_history(history_df)
-    workbook = load_workbook(io.BytesIO(file_bytes))
-
-    # Remove the sheet under any spelling ('_status history'), or openpyxl would create
-    # '_Status History1' next to it and the generator would lose the history chain.
-    wanted = canon_header(STATUS_HISTORY_SHEET_NAME)
-    for name in list(workbook.sheetnames):
-        if canon_header(name) == wanted:
-            del workbook[name]
-
-    ws = workbook.create_sheet(STATUS_HISTORY_SHEET_NAME)
-    ws.sheet_state = "hidden"
-
-    for col_idx, header in enumerate(STATUS_HISTORY_COLUMNS, start=1):
-        ws.cell(1, col_idx).value = header
-
-    for row_idx, record in enumerate(history.to_dict("records"), start=2):
-        for col_idx, header in enumerate(STATUS_HISTORY_COLUMNS, start=1):
-            ws.cell(row_idx, col_idx).value = record.get(header, "")
-
-    out = io.BytesIO()
-    workbook.save(out)
-    workbook.close()
-    out.seek(0)
-    return out.getvalue()
-
+    from workbook_io import replace_hidden_sheets
+    return replace_hidden_sheets(file_bytes, {STATUS_HISTORY_SHEET_NAME: normalize_status_history(history_df)})
 
 def build_status_prompt_message(row: pd.Series) -> str:
     if not bool(row.get("status_needs_update_prompt", False)):
@@ -2335,6 +2315,12 @@ def parse_workbook_bytes(file_bytes: bytes) -> Dict[str, Any]:
         parsed["loan_mod_info"] = mod_info
 
         try:
+            parsed["supplemental"] = data_views.parse_supplemental(workbook)
+        except Exception as exc:
+            parsed["supplemental"] = {}
+            LOG.warning("event=supplemental_read_failed type=%s", type(exc).__name__)
+
+        try:
             parsed["hidden_sheets"] = _parse_underscore_sheets(workbook)
         except Exception:
             parsed["hidden_sheets"] = {}
@@ -2748,7 +2734,7 @@ def normalize_loan_modifications_with_info(raw_df: Optional[pd.DataFrame]) -> Tu
         info["unrecognized_match"] = int(
             (flags.isna() & df["Portfolio Overview Match"].map(lambda v: not _cell_is_blank(v)).astype(bool)).sum()
         )
-        if recognised_true.any():
+        if flags.notna().any():
             info["match_filter_applied"] = True
             info["excluded_by_match"] = int((~recognised_true).sum())
             df = df[recognised_true].copy()
@@ -3677,12 +3663,12 @@ def _bump(key: str) -> None:
 
 
 def now_text() -> str:
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return shell.viewer_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def current_meeting_date() -> dt.date:
     """The meeting date: P1 keeps a single date, the sidebar as-of date."""
-    value = st.session_state.get("as_of_date")
+    value = st.session_state.get("meeting_date") or st.session_state.get("as_of_date")
     return value if isinstance(value, dt.date) else dt.date.today()
 
 
@@ -3833,7 +3819,7 @@ def jump_cb() -> None:
     close_dialog_cb()
     target = st.session_state.get("jump_to")
     if target:
-        st.session_state.cursor = target
+        st.session_state.cursor = (st.session_state.get("_jump_key_map") or {}).get(target, target)
     st.session_state.jump_to = None
 
 
@@ -3843,6 +3829,8 @@ def reset_filters_cb() -> None:
     st.session_state.sheet_filter = "All"
     st.session_state.search_query = ""
     st.session_state.stale_only = False
+    st.session_state.owner_filter = []
+    st.session_state.focus_filters = []
     close_dialog_cb()
 
 
@@ -4207,72 +4195,46 @@ def export_overrides_csv(raw_deck: pd.DataFrame, deck: pd.DataFrame) -> bytes:
     export_df = build_updates_dataframe(raw_deck, deck)
     if export_df.empty:
         return b""
-    return export_df.to_csv(index=False).encode("utf-8")
+    return cockpit.safe_csv(export_df)
 
 
-def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, str]]) -> bytes:
+def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, Any]]) -> bytes:
+    """Write edits to the exact parsed row without rewriting unrelated workbook cells."""
     if not overrides:
         return file_bytes
-
-    workbook = load_workbook(io.BytesIO(file_bytes))
-
-    for sheet_name in PORTFOLIO_SHEETS:
-        relevant = [item for item in overrides.values() if item.get("sheet") == sheet_name]
-        if not relevant:
+    from workbook_io import patch_text_cells
+    parsed = parse_workbook(file_bytes, bytes_sha256(file_bytes))
+    if parsed.get("error"):
+        raise ValueError("Workbook could not be parsed for export")
+    writes = {}
+    for sheet in PORTFOLIO_SHEETS:
+        report = parsed.get("sheets", {}).get(sheet) or {}
+        base = report.get("base")
+        layout = report.get("layout")
+        if base is None or base.empty or not layout:
             continue
-        tab, _how = resolve_sheet_name(workbook.sheetnames, sheet_name)
-        if tab is None:
-            continue
-        ws = workbook[tab]
-
-        # Same layout resolver as the loader: same header row, same first 'Status' /
-        # owner (Point Person > Asset Manager > Active RM) / 'AM Commentary' column.
-        layout = resolve_sheet_layout(ws)
-        if layout is None or not layout["role_cols"].get("deal"):
-            continue
-        header_row = layout["header_row"]
-        key_col = layout["role_cols"]["deal"]
-        status_col = layout["role_cols"].get("status")
-        owner_col = layout["role_cols"].get("owner")
-        commentary_col = layout["role_cols"].get("commentary")
-
-        # First visible row per deal number (the row the deck shows under the plain key).
-        row_lookup: Dict[str, int] = {}
-        hidden_lookup: Dict[str, int] = {}
-        for offset, values in enumerate(
-            ws.iter_rows(
-                min_row=header_row + 1,
-                max_row=max(ws.max_row, header_row + 1),
-                min_col=key_col,
-                max_col=key_col,
-                values_only=True,
-            )
-        ):
-            r = header_row + 1 + offset
-            kind, deal_number = _classify_deal_cell(values[0] if values else None)
-            if kind != "deal":
+        by_key = {str(row["deal_key"]): row for row in base.to_dict("records")}
+        by_row = {int(row["_excel_row"]): row for row in by_key.values()}
+        for item in overrides.values():
+            if norm_label(item.get("sheet")) != sheet:
                 continue
-            target = hidden_lookup if ws.row_dimensions[r].hidden else row_lookup
-            target.setdefault(deal_number, r)
-
-        for item in relevant:
-            deal_number = norm_id(item.get("deal_number"))
-            target_row = row_lookup.get(deal_number) or hidden_lookup.get(deal_number)
-            if not target_row:
-                continue
-            if status_col is not None:
-                ws.cell(target_row, status_col).value = item.get("status", "")
-            if owner_col is not None:
-                ws.cell(target_row, owner_col).value = item.get("owner", "")
-            if commentary_col is not None:
-                ws.cell(target_row, commentary_col).value = item.get("commentary", "")
-
-    out = io.BytesIO()
-    workbook.save(out)
-    workbook.close()
-    out.seek(0)
-    return out.getvalue()
-
+            row_no = _optional_int(item.get("excel_row"))
+            key = str(item.get("deal_key") or get_override_key(sheet, item.get("deal_number")))
+            record = by_row.get(row_no) if row_no is not None else by_key.get(key)
+            if record is None or norm_id(record.get("deal_number")) != norm_id(item.get("deal_number")):
+                raise ValueError("An edited deal no longer matches its workbook row")
+            if str(record["deal_key"]) != key:
+                raise ValueError("An edited deal has a different duplicate-row identity")
+            target_row = int(record["_excel_row"])
+            for field_name, role in (("status", "status"), ("owner", "owner"), ("commentary", "commentary")):
+                column = layout["role_cols"].get(role)
+                value = _field_clean(field_name, item.get(field_name))
+                if column is None:
+                    if value != _field_clean(field_name, record.get(field_name)):
+                        raise ValueError("An edited field has no corresponding workbook column")
+                    continue
+                writes.setdefault(report["tab"], {})[f"{get_column_letter(column)}{target_row}"] = value
+    return patch_text_cells(file_bytes, writes)
 
 def process_status_history_upload() -> None:
     uploaded_history = st.session_state.get("uploaded_status_history")
@@ -4557,6 +4519,7 @@ def render_controls_bar(
     with st.sidebar:
         st.title(APP_TITLE)
         st.caption("Meeting navigation, workbook controls, and filters")
+        st.caption(f"Version {APP_VERSION}")
         st.caption(f"Workbook: {md_escape(workbook_name)}")
         edited = len(native_overrides())
         if edited:
@@ -4568,7 +4531,8 @@ def render_controls_bar(
             options=list(VIEW_OPTIONS),
             key="view_mode",
             horizontal=False,
-            on_change=close_dialog_cb,
+            on_change=shell.request_view,
+            persist_state="session",
         )
 
         st.divider()
@@ -4586,9 +4550,10 @@ def render_controls_bar(
             key="as_of_date",
             format="MM/DD/YYYY",
             on_change=mark_as_of_manual_cb,
+            persist_state="session",
         )
         render_as_of_notes(parsed, deck_info)
-        st.toggle("Include hidden rows", key="include_hidden")
+        st.toggle("Include hidden rows", key="include_hidden", persist_state="session")
         render_workbook_notes(parsed)
 
         st.divider()
@@ -4625,12 +4590,12 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
     if history is None:
         history = empty_status_history()
     history_name = display_text(st.session_state.get("uploaded_status_history_name", ""), blank="None loaded")
-    warning_count = int(deck["status_needs_update_prompt"].sum()) if "status_needs_update_prompt" in deck.columns else 0
+    open_count, addressed_count = reminder_counts(deck)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("History rows", fmt_int(len(history)), border=True)
     c2.metric("History source", history_name, border=True)
-    c3.metric("Update reminders", fmt_int(warning_count), border=True)
+    c3.metric("Update reminders", fmt_int(open_count), help=reminder_metric_help(addressed_count), border=True)
 
     if st.session_state.get("status_history_load_error"):
         st.error(f"Could not load status history: {st.session_state.status_history_load_error}")
@@ -4640,6 +4605,27 @@ def render_status_history_notice(deck: pd.DataFrame) -> None:
             "No embedded status history is loaded yet. The app will still run; update reminders begin once "
             "you use a workbook generated by the weekly overview builder with the hidden history sheet."
         )
+
+
+def reminder_counts(deck: pd.DataFrame) -> Tuple[int, int]:
+    """(open update reminders, reminders addressed this meeting)."""
+    if deck.empty or "status_needs_update_prompt" not in deck.columns:
+        return 0, 0
+    open_count = int(flag_array(deck["status_needs_update_prompt"]).sum())
+    addressed = 0
+    if "reminder_addressed" in deck.columns:
+        addressed = int(sum(1 for value in deck["reminder_addressed"].tolist() if norm_label(value)))
+    return open_count, addressed
+
+
+def reminder_metric_help(addressed_count: int) -> str:
+    text = (
+        f"Deals whose status has stayed the same for {STATUS_STALE_MEETING_THRESHOLD}+ meetings. A reminder "
+        "clears when the status changes, the AM commentary is refreshed, or the status is confirmed as still accurate."
+    )
+    if addressed_count:
+        text += f" {_plural(addressed_count, 'reminder')} addressed this meeting."
+    return text
 
 
 def balances_caption(as_of_date: dt.date, deck_info: Optional[Dict[str, Any]] = None) -> str:
@@ -4654,16 +4640,38 @@ def balances_caption(as_of_date: dt.date, deck_info: Optional[Dict[str, Any]] = 
     return " · ".join(parts)
 
 
-def render_overview_view(
-    deck: pd.DataFrame,
-    as_of_date: dt.date,
-    deck_info: Optional[Dict[str, Any]] = None,
-) -> None:
+def render_empty_filter_state(ctx: AppContext, where: str) -> None:
+    """No deal matches the filters: say so and offer to clear them (never a dead end)."""
+    unfiltered_reminders = filter_deck(
+        ctx.deck,
+        sheet_filter=st.session_state.get("sheet_filter"),
+        query=st.session_state.get("search_query") or "",
+        stale_only=False,
+    )
+    if st.session_state.get("stale_only") and not unfiltered_reminders.empty:
+        st.success("All update reminders handled for the current filters.", icon=":material/task_alt:")
+    st.info("No deals match the current filters", icon=":material/filter_alt_off:")
+    parts = active_filter_parts()
+    if parts:
+        st.caption("Active filters: " + " · ".join(md_escape(part) for part in parts))
+    st.button(
+        "Clear filters",
+        key=f"clear_filters::{where}",
+        on_click=reset_filters_cb,
+        icon=":material/filter_alt_off:",
+    )
+
+
+def render_overview_view(ctx: AppContext) -> None:
+    deck = ctx.filtered
+    if deck.empty:
+        render_empty_filter_state(ctx, "overview")
+        return
     total_upb = deck["upb"].fillna(0).sum()
     bridge_count = int((deck["sheet"] == "Bridge").sum())
     term_count = int((deck["sheet"] == "Term").sum())
     due_30, past_maturity = maturity_buckets(deck["days_to_maturity"])
-    stale_count = int(deck["status_needs_update_prompt"].sum())
+    stale_count, addressed_count = reminder_counts(deck)
 
     if "loan_mod_count" in deck.columns:
         loan_mod_count_series = pd.to_numeric(deck["loan_mod_count"], errors="coerce").fillna(0)
@@ -4694,8 +4702,12 @@ def render_overview_view(
         help=f"0–{MATURITY_WATCH_DAYS} days after the as-of date",
         border=True,
     )
-    m7.metric("Update reminders", fmt_int(stale_count), border=True)
-    st.caption(balances_caption(as_of_date, deck_info))
+    m7.metric("Update reminders", fmt_int(stale_count), help=reminder_metric_help(addressed_count), border=True)
+    caption = balances_caption(ctx.as_of, ctx.deck_info)
+    parts = active_filter_parts()
+    if parts:
+        caption += " · Filtered: " + ", ".join(md_escape(part) for part in parts)
+    st.caption(caption)
 
     render_status_history_notice(deck)
 
@@ -4706,7 +4718,7 @@ def render_overview_view(
         st.dataframe(
             loan_mod_spotlight,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Comments": st.column_config.TextColumn("Comments", width="large"),
                 "Modification Type": st.column_config.TextColumn("Modification Type", width="medium"),
@@ -4714,7 +4726,7 @@ def render_overview_view(
         )
 
     if stale_count:
-        stale = deck[deck["status_needs_update_prompt"] == True].copy()  # noqa: E712
+        stale = deck[flag_array(deck["status_needs_update_prompt"])].copy()
         st.warning(f"{stale_count} deal(s) have an update reminder before the meeting is closed.")
         st.dataframe(
             stale[[
@@ -4733,7 +4745,7 @@ def render_overview_view(
                 }
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     st.info(
@@ -4744,7 +4756,7 @@ def render_overview_view(
     left, right = st.columns([1.15, 0.85], gap="large")
     with left:
         st.subheader("Agenda queue")
-        st.dataframe(build_agenda_dataframe(deck), hide_index=True, use_container_width=True)
+        st.dataframe(build_agenda_dataframe(deck), hide_index=True, width="stretch")
 
     with right:
         st.subheader("Upcoming timing")
@@ -4767,64 +4779,250 @@ def render_overview_view(
                 columns={"sheet": "Type", "deal_name": "Deal Name"}
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
 
 # -----------------------------------------------------------------------------
-# Edit dialog
+# Dialogs: one dispatcher, at most one dialog per run
 # -----------------------------------------------------------------------------
-def maybe_open_edit_dialog(current_deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
-    target = st.session_state.get("dialog_target")
-    if not target:
-        return
+def owner_header_label(deck_info: Optional[Dict[str, Any]], sheet: str) -> str:
+    """The sheet's own owner header (Point Person, Asset Manager or Active RM)."""
+    header = (((deck_info or {}).get("sheets") or {}).get(sheet) or {}).get("owner_header")
+    return norm_label(header) or OWNER_LABEL_FALLBACK.get(sheet, "Owner")
 
-    current_row = get_row_by_key(current_deck, target)
-    raw_row = get_row_by_key(raw_deck, target)
-    if current_row is None or raw_row is None:
-        st.session_state.dialog_target = None
-        return
 
-    @st.dialog("Update current deal", width="large")
-    def edit_dialog(current_row_dict: Dict[str, object], raw_row_dict: Dict[str, object]) -> None:
-        current_row_local = pd.Series(current_row_dict)
-        raw_row_local = pd.Series(raw_row_dict)
-        deal_key = str(current_row_local.get("deal_key"))
+def edit_dialog_payload(row: pd.Series, deck_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Plain values the edit dialog shows (the deal on screen when Edit was clicked)."""
+    sheet = norm_label(row.get("sheet"))
+    reminder = ""
+    if bool(row.get("status_needs_update_prompt", False)):
+        reminder = str(row.get("status_prompt_message") or "")
+    return {
+        "deal_key": str(row.get("deal_key")),
+        "deal_name": display_text(row.get("deal_name")),
+        "deal_number": display_text(row.get("deal_number")),
+        "sheet": sheet,
+        "status": norm_label(row.get("status")),
+        "owner": norm_label(row.get("owner")),
+        "commentary": clean_free_text(row.get("commentary")),
+        "owner_label": owner_header_label(deck_info, sheet),
+        "reminder": reminder,
+    }
 
-        st.caption(
-            f"{display_text(current_row_local.get('deal_name'))} | "
-            f"Deal {display_text(current_row_local.get('deal_number'))}"
+
+@st.dialog("Update deal", width="large", icon=":material/edit_note:", on_dismiss=close_dialog_cb)
+def edit_deal_dialog(deal: Dict[str, Any]) -> None:
+    """Edit Status / owner / AM Commentary of the deal captured when 'Edit status' was
+    clicked. Esc, X and click-outside run close_dialog_cb, so the dialog never reopens
+    later for another deal; Enter in a text box does not submit."""
+    deal_key = deal["deal_key"]
+    active = st.session_state.get("active_dialog") or {}
+    if active.get("kind") != DIALOG_EDIT or active.get("deal_key") != deal_key:
+        st.rerun()  # stale: navigation already closed or retargeted this dialog
+    st.caption(f"{md_escape(deal['deal_name'])} · {md_escape(deal['deal_number'])} · {md_escape(deal['sheet'])}")
+    if deal.get("reminder"):
+        st.warning(md_escape(deal["reminder"]), icon=":material/update:")
+    with st.form(f"edit::{deal_key}", enter_to_submit=False, border=False):
+        left, right = st.columns(2)
+        with left:
+            status = st.text_input("Status", value=deal["status"], key=f"edit_status::{deal_key}")
+        with right:
+            owner = st.text_input(md_escape(deal["owner_label"]), value=deal["owner"], key=f"edit_owner::{deal_key}")
+        commentary = st.text_area(
+            "AM Commentary",
+            value=deal["commentary"],
+            height="content",
+            key=f"edit_commentary::{deal_key}",
         )
+        submitted = st.form_submit_button("Save changes", type="primary", icon=":material/save:")
+    if submitted:
+        apply_edit(deal_key, status=status, owner=owner, commentary=commentary, source="dialog")
+        close_dialog_cb()
+        st.rerun()
+    if st.button("Cancel", key=f"edit_cancel::{deal_key}"):
+        close_dialog_cb()
+        st.rerun()
 
-        if bool(current_row_local.get("status_needs_update_prompt", False)):
-            st.warning(str(current_row_local.get("status_prompt_message") or "Update reminder."))
 
-        with st.form(f"edit-form::{deal_key}"):
-            c1, c2 = st.columns(2)
-            with c1:
-                status = st.text_input("Status", value=str(current_row_local.get("status") or ""))
-            with c2:
-                owner_label = "Point Person" if current_row_local.get("sheet") == "Bridge" else "Asset Manager"
-                owner = st.text_input(owner_label, value=str(current_row_local.get("owner") or ""))
+def workbook_switch_summary(
+    foreign: Dict[str, Dict[str, Any]],
+    base_rows: Dict[str, Dict[str, Any]],
+    workbook_names: Dict[str, str],
+    new_name: str,
+) -> Dict[str, Any]:
+    """What the guard dialog says: how many edits, from which workbook(s), how many
+    match deals in the new one, which do not, and the CSV of all of them."""
+    items = [copy.deepcopy(item) for item in foreign.values()]
+    names = dict(workbook_names)
+    old_names = sorted(
+        {names.get(str(item.get("workbook_sha") or ""), "") for item in items} - {""}
+    )
+    unmatched = [
+        f"{norm_label(item.get('sheet'))} {norm_id(item.get('deal_number'))}".strip()
+        for key, item in foreign.items()
+        if key not in base_rows
+    ]
+    return {
+        "total": len(items),
+        "matched": sum(1 for key in foreign if key in base_rows),
+        "unmatched": unmatched,
+        "old_names": old_names,
+        "new_name": new_name,
+        # Built lazily on click, from copies captured now (download callables run on
+        # another thread, without session state).
+        "csv": lambda: edits_csv_bytes(items, names),
+    }
 
-            commentary = st.text_area(
-                "AM Commentary",
-                value=str(current_row_local.get("commentary") or ""),
-                height=240,
+
+@st.dialog("Different workbook loaded", width="medium", dismissible=False, icon=":material/swap_horiz:")
+def workbook_switch_dialog(summary: Dict[str, Any]) -> None:
+    """Edits made on another workbook are not applied until the user chooses here."""
+    if not current_foreign_overrides():
+        st.rerun()  # already decided (e.g. by another click)
+    old = " and ".join(md_escape(name) for name in summary["old_names"]) or "an earlier workbook"
+    st.markdown(
+        f"You have {_plural(summary['total'], 'edit')} from {old}. "
+        f"{summary['matched']:,} match deals in {md_escape(summary['new_name'])}."
+    )
+    if summary["unmatched"]:
+        shown = summary["unmatched"][:12]
+        more = len(summary["unmatched"]) - len(shown)
+        st.markdown(
+            "Not in this workbook (dropped if you keep the matching edits): "
+            + ", ".join(md_escape(label) for label in shown)
+            + (f" and {more} more" if more > 0 else "")
+            + "."
+        )
+    st.caption("Until you choose, the deck shows this workbook's own values.")
+    left, right = st.columns(2)
+    with left:
+        st.button(
+            f"Keep {_plural(summary['matched'], 'matching edit')}",
+            key="wb_switch_keep",
+            type="primary",
+            on_click=keep_matching_edits_cb,
+            disabled=not summary["matched"],
+            width="stretch",
+        )
+    with right:
+        st.button("Discard all edits", key="wb_switch_discard", on_click=discard_foreign_edits_cb, width="stretch")
+    st.download_button(
+        "Download my edits first",
+        data=summary["csv"],
+        file_name=f"meeting_edits_{dt.date.today():%Y-%m-%d}.csv",
+        mime="text/csv",
+        key="wb_switch_download",
+        on_click="ignore",
+        icon=":material/download:",
+        width="stretch",
+    )
+
+
+def current_foreign_overrides() -> Dict[str, Dict[str, Any]]:
+    wb_sha = current_wb_sha()
+    overrides = st.session_state.get("meeting_overrides") or {}
+    return {key: item for key, item in overrides.items() if str(item.get("workbook_sha") or wb_sha) != wb_sha}
+
+
+def render_active_dialog(ctx: AppContext) -> Optional[str]:
+    """The single dialog dispatcher: renders at most one dialog per run and silently
+    clears a target that no longer applies (deal gone, other view)."""
+    active = st.session_state.get("active_dialog")
+    kind, clear = dialog_to_render(
+        active,
+        view=ctx.view,
+        deck_keys=ctx.deck_keys,
+        has_foreign=bool(ctx.foreign_overrides),
+    )
+    if clear:
+        close_dialog_cb()
+    if kind == DIALOG_WORKBOOK_SWITCH:
+        workbook_switch_dialog(
+            workbook_switch_summary(
+                ctx.foreign_overrides,
+                ctx.base_rows,
+                st.session_state.get("_wb_names") or {},
+                ctx.workbook_name,
             )
+        )
+    elif kind == DIALOG_EDIT:
+        row = ctx.row((active or {}).get("deal_key"))
+        if row is None:
+            close_dialog_cb()
+            return None
+        edit_deal_dialog(edit_dialog_payload(row, ctx.deck_info))
+    return kind
 
-            save_clicked = st.form_submit_button("Save changes", type="primary")
 
-            if save_clicked:
-                upsert_override(raw_row_local, status, owner, commentary)
-                st.session_state.dialog_target = None
-                st.rerun()
+# -----------------------------------------------------------------------------
+# Error boundaries and privacy-safe logging
+# -----------------------------------------------------------------------------
+def configure_logging() -> None:
+    """Send the 'wpo' INFO events to the server log (once per process)."""
+    if getattr(LOG, "_wpo_configured", False):
+        return
+    if not LOG.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        LOG.addHandler(handler)
+    LOG.setLevel(logging.INFO)
+    LOG._wpo_configured = True  # type: ignore[attr-defined]
 
-        if st.button("Cancel", use_container_width=True):
-            st.session_state.dialog_target = None
-            st.rerun()
 
-    edit_dialog(current_row.to_dict(), raw_row.to_dict())
+def incident_ref() -> str:
+    """Five base32 characters to quote when reporting a failure."""
+    return "".join(secrets.choice(INCIDENT_REF_ALPHABET) for _ in range(5))
+
+
+def show_error_details() -> bool:
+    """Tracebacks on screen only when running locally or with WPO_DEBUG=1."""
+    if os.environ.get(DEBUG_ENV, "").strip() == "1":
+        return True
+    try:
+        url = st.context.url
+    except Exception:
+        return False
+    if not url:
+        return False
+    try:
+        host = urllib.parse.urlparse(str(url)).hostname or ""
+    except ValueError:
+        return False
+    return host.lower() in LOCAL_HOSTS
+
+
+def traceback_frames(exc: BaseException, limit: int = 8) -> str:
+    """'file:line:function' frames, innermost first. The exception message is left out:
+    it can quote cell values."""
+    frames = traceback.extract_tb(exc.__traceback__)[-limit:]
+    return " < ".join(f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}" for frame in reversed(frames))
+
+
+def report_incident(where: str, exc: Exception) -> str:
+    ref = incident_ref()
+    LOG.error("event=error ref=%s where=%s type=%s at=%s", ref, where, type(exc).__name__, traceback_frames(exc))
+    st.error(
+        f"Ref {ref}. Your edits in this session are safe. Switch view or reload; send the ref to the app owner.",
+        title=f"{where} could not render",
+        icon=":material/error:",
+    )
+    if show_error_details():
+        st.exception(exc)
+    return ref
+
+
+@contextmanager
+def guard(where: str) -> Iterator[None]:
+    """Error boundary around a view, dialog or panel: an Exception becomes a titled error
+    with an incident ref (the rest of the page still renders). st.rerun, st.stop and
+    st.switch_page raise BaseException subclasses and pass straight through."""
+    try:
+        yield
+    except Exception as exc:  # noqa: BLE001 - this is the boundary
+        report_incident(where, exc)
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -4926,7 +5124,7 @@ PRESENTATION_CSS = """
 
 
 def apply_presentation_css() -> None:
-    st.markdown(PRESENTATION_CSS, unsafe_allow_html=True)
+    st.html(PRESENTATION_CSS)
 
 
 def timing_signal(days: object, warn_within: int = 0) -> Tuple[str, str]:
@@ -5045,32 +5243,22 @@ def render_html_commentary_panel(commentary: object) -> None:
 
 
 def render_agenda_jump(deck: pd.DataFrame, current_idx: int) -> None:
-    option_labels = [
-        f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}"
-        for i, row in enumerate(
-            deck[["sheet", "deal_name", "deal_number"]].itertuples(index=False, name="DealRow")
-        )
-    ]
-    selected_label = st.selectbox("Jump to deal", options=option_labels, index=current_idx)
-    selected_idx = option_labels.index(selected_label)
-    if selected_idx != current_idx:
-        st.session_state.selected_deal_key = deck.iloc[selected_idx]["deal_key"]
-        st.rerun()
-
+    labels = [f"{i + 1}. {row.sheet} | {row.deal_name} | {row.deal_number}" for i, row in enumerate(deck.itertuples(index=False))]
+    st.session_state["_jump_key_map"] = dict(zip(labels, deck["deal_key"].astype(str)))
+    st.selectbox("Jump to deal", options=labels, index=None, placeholder="Jump to deal # or name", filter_mode="contains", key="jump_to", on_change=jump_cb)
 
 def render_html_status_check_panel(current_row: pd.Series) -> None:
+    key = str(current_row.get("deal_key"))
+    addressed = norm_label(current_row.get("reminder_addressed"))
+    if addressed == REMINDER_CONFIRMED:
+        st.caption("Status confirmed as still accurate for this meeting.")
+        st.button("Undo confirmation", key=f"unconfirm_reminder::{key}", on_click=unconfirm_reminder_cb, args=(key,))
+        return
     if not bool(current_row.get("status_needs_update_prompt", False)):
         return
-
     body = str(current_row.get("status_prompt_message") or "Review whether the meeting update should be refreshed.")
-    st.markdown(
-        "<section class='rt-status-card rt-status-card-warning'>"
-        "<div class='rt-status-card-title'>Update reminder</div>"
-        f"<div class='rt-status-card-body'>{html_safe(body)}</div>"
-        "</section>",
-        unsafe_allow_html=True,
-    )
-
+    st.markdown("<section class='rt-status-card rt-status-card-warning'><div class='rt-status-card-title'>Update reminder</div>" + f"<div class='rt-status-card-body'>{html_safe(body)}</div></section>", unsafe_allow_html=True)
+    st.button("Confirm still accurate", key=f"confirm_reminder::{key}", on_click=confirm_reminder_cb, args=(key, current_meeting_date().isoformat()), icon=":material/verified:")
 
 def build_capital_items(current_row: pd.Series) -> List[Tuple[str, object]]:
     # Exact dollars here so Commitment - Funded = Remaining reconciles on screen; the KPI
@@ -5397,6 +5585,9 @@ def build_presentation_kpis(row: pd.Series) -> List[Tuple]:
     """The five KPI tiles of a Presentation slide (label, value, helper, class[, tooltip])."""
     maturity_timing, maturity_signal_class = timing_signal(row.get("days_to_maturity"), warn_within=MATURITY_WATCH_DAYS)
     payment_timing, payment_signal_class = timing_signal(row.get("days_to_next_payment"))
+    from portfolio_cockpit import consistency_checks
+    if any(check['code'] == 'STALE_PAYMENT_DATE' for check in consistency_checks(row)):
+        payment_timing, payment_signal_class = 'Date not current?', 'rt-signal-amber'
     loan_mod_helper, loan_mod_signal = loan_mod_kpi_helper(row)
     return [
         ("UPB", fmt_money(row.get("upb"), decimals=0), "Current balance", "rt-signal-muted"),
@@ -5407,58 +5598,43 @@ def build_presentation_kpis(row: pd.Series) -> List[Tuple]:
     ]
 
 
-def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mods: pd.DataFrame) -> None:
+def render_presentation_view(ctx: AppContext) -> None:
     apply_presentation_css()
-    sync_selected_deal(deck)
-    current_row = get_selected_row(deck)
-    current_idx = int(deck.index[deck["deal_key"] == current_row["deal_key"]][0])
+    if ctx.filtered.empty:
+        render_empty_filter_state(ctx, "presentation")
+    if not ctx.agenda_keys or ctx.cursor is None:
+        return
+    deck = ctx.deck.set_index("deal_key", drop=False).loc[ctx.agenda_keys].reset_index(drop=True)
+    current_idx = ctx.agenda_keys.index(ctx.cursor)
+    current_row = deck.iloc[current_idx]
     total_count = len(deck)
-    progress_value = 0.0 if total_count <= 1 else (current_idx + 1) / total_count
-    deal_key = str(current_row.get("deal_key"))
-
-    with st.container(border=True):
-        top_left, top_mid, top_filter, top_jump, top_prompt, top_edit = st.columns(
-            [0.72, 0.72, 1.12, 2.55, 1.05, 0.98],
-            vertical_alignment="bottom",
-        )
+    progress_value = (current_idx + 1) / total_count
+    deal_key = ctx.cursor
+    loan_mods = ctx.loan_mods
+    with st.container(border=True, key="presenter_bar"):
+        top_left, top_mid, top_jump, top_prompt, top_edit = st.columns([0.8, 0.8, 3.2, 1.1, 1.2], vertical_alignment="bottom")
         with top_left:
-            st.button(
-                "Previous",
-                use_container_width=True,
-                disabled=current_idx == 0,
-                on_click=move_selection,
-                args=(deck, -1),
-            )
+            st.button("Previous", width="stretch", disabled=current_idx == 0, on_click=move_cursor_cb, args=(ctx.agenda_keys, -1), shortcut="Left")
         with top_mid:
-            st.button(
-                "Next",
-                use_container_width=True,
-                disabled=current_idx >= total_count - 1,
-                on_click=move_selection,
-                args=(deck, 1),
-            )
-        with top_filter:
-            st.segmented_control(
-                "Portfolio type",
-                options=["All", "Bridge", "Term"],
-                key="sheet_filter",
-                width="stretch",
-            )
+            st.button("Next", width="stretch", disabled=current_idx >= total_count - 1, on_click=move_cursor_cb, args=(ctx.agenda_keys, 1), shortcut="Right")
         with top_jump:
             render_agenda_jump(deck, current_idx)
         with top_prompt:
             with st.popover("Prompts", icon=":material/lightbulb:", width="stretch"):
-                render_html_prompt_panel(build_presenter_prompts(current_row))
+                render_html_prompt_panel((live_data.lg_presenter_prompts(current_row, (st.session_state.get("_data_context") or {}).get("lg")) + build_presenter_prompts(current_row))[:6])
         with top_edit:
-            if st.button("Edit status", type="primary", use_container_width=True):
-                st.session_state.dialog_target = deal_key
-                st.rerun()
-
+            st.button("Edit status", type="primary", width="stretch", on_click=open_dialog_cb, args=(DIALOG_EDIT, deal_key), shortcut="E")
         st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
-
+        if ctx.cursor_outside:
+            st.badge("Outside current filter", color="gray", icon=":material/filter_alt_off:")
     render_html_hero(current_row, current_idx, total_count)
 
     render_html_kpi_strip(build_presentation_kpis(current_row))
+    with guard("Current loan picture"):
+        data_views.render_current(current_row, ctx.deck, ctx.parsed, st.session_state.get("_data_context"))
+        cockpit.render_deal(current_row, ctx, sys.modules[__name__])
+    with guard("Meeting capture"):
+        meeting_work.render_deal(ctx, current_row, sys.modules[__name__])
 
     # KPIs first, then the collapsible loan modifications section with the
     # button/dropdown toggle to switch between each modification on the loan.
@@ -5520,49 +5696,23 @@ def render_presentation_view(deck: pd.DataFrame, raw_deck: pd.DataFrame, loan_mo
                     }
                 ),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
 
 # -----------------------------------------------------------------------------
 # Review and exports
 # -----------------------------------------------------------------------------
-def render_review_view(deck: pd.DataFrame, raw_deck: pd.DataFrame) -> None:
+def render_review_view(ctx: AppContext) -> None:
     st.subheader("Review and update")
-    st.caption("Edit Status, Owner, and AM Commentary. Disabled columns are for reference.")
-
-    review_df = build_review_dataframe(deck)
-    edited_df = st.data_editor(
-        review_df,
-        key="review_editor",
-        use_container_width=True,
-        hide_index=False,
-        disabled=[
-            "Agenda #",
-            "Type",
-            "Deal Name",
-            "Deal #",
-            "Maturity",
-            "Next Payment",
-            "UPB",
-            "Update Reminder",
-        ],
-        column_config={
-            "AM Commentary": st.column_config.TextColumn("AM Commentary", width="large"),
-            "Status": st.column_config.TextColumn("Status", width="medium"),
-            "Owner": st.column_config.TextColumn("Owner", width="medium"),
-        },
-    )
-
-    c1, c2 = st.columns([0.4, 0.6])
-    with c1:
-        if st.button("Apply review edits", type="primary", use_container_width=True):
-            apply_review_edits(edited_df, deck, raw_deck)
-            st.success("Review edits applied.")
-            st.rerun()
-    with c2:
-        st.caption("Download the updated workbook from Exports after applying edits.")
-
+    if ctx.filtered.empty:
+        render_empty_filter_state(ctx, "review")
+        return
+    st.caption(f"Edits save when you leave a cell · {len(native_overrides()):,} deals edited this meeting")
+    review_df = build_review_dataframe(ctx.filtered)
+    editor_key = f"review_editor::{st.session_state.review_editor_version}"
+    row_keys = ctx.filtered["deal_key"].astype(str).tolist()
+    st.data_editor(review_df, key=editor_key, width="stretch", hide_index=True, column_order=list(REVIEW_COLUMN_ORDER), disabled=[column for column in REVIEW_COLUMN_ORDER if column not in REVIEW_EDITABLE_COLUMNS], on_change=commit_review_cb, args=(editor_key, row_keys), column_config={"AM Commentary": st.column_config.TextColumn("AM Commentary", width="large", max_chars=COMMENTARY_MAX_CHARS), "Status": st.column_config.TextColumn("Status", width="medium"), "Owner": st.column_config.TextColumn("Owner", width="medium")})
 
 def render_exports_view(
     file_bytes: bytes,
@@ -5580,7 +5730,7 @@ def render_exports_view(
         workbook_name=workbook_name,
     )
     update_bytes = export_overrides_csv(raw_deck, deck)
-    workbook_bytes = update_workbook_bytes(file_bytes, ensure_override_store())
+    workbook_bytes = update_workbook_bytes(file_bytes, native_overrides())
     workbook_bytes = write_status_history_sheet_to_workbook_bytes(workbook_bytes, updated_history)
     agenda_bytes = build_agenda_dataframe(deck).to_csv(index=False).encode("utf-8")
 
@@ -5591,7 +5741,7 @@ def render_exports_view(
             data=update_bytes,
             file_name="weekly_portfolio_meeting_updates.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             disabled=(len(update_bytes) == 0),
         )
         st.download_button(
@@ -5599,7 +5749,7 @@ def render_exports_view(
             data=agenda_bytes,
             file_name="weekly_portfolio_agenda.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
     with c2:
@@ -5608,30 +5758,20 @@ def render_exports_view(
             data=workbook_bytes,
             file_name=f"updated_{workbook_name}",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
         st.download_button(
             "Download status history CSV backup",
             data=status_history_to_csv_bytes(updated_history),
             file_name="status_history_backup.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
     st.info(
         "The updated workbook includes the hidden _Status History sheet. Use that workbook or the "
         "Jupyter weekly overview generator as the normal path; the CSV is only a backup/export."
     )
-
-    st.subheader("Recommended .gitignore entries")
-    st.code(
-        "status_history.csv\n"
-        "*_status_history.csv\n"
-        "weekly_portfolio_status_history*.csv\n"
-        "*.xlsx\n",
-        language="gitignore",
-    )
-
 
 # -----------------------------------------------------------------------------
 # Workbook source and main app
@@ -5681,80 +5821,88 @@ def render_no_workbook_loaded() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
-    initialize_state()
-    load_default_status_history_once()
-
-    file_bytes, workbook_name = get_workbook_source()
-    parsed: Optional[Dict[str, Any]] = None
-    wb_sha = ""
+    st.set_page_config(page_title=APP_TITLE, layout="wide", menu_items={"About": f"{APP_TITLE} · {APP_VERSION}"})
+    configure_logging()
+    init_state()
+    app = sys.modules[__name__]
+    if hasattr(meeting_work, "restore_session"):
+        meeting_work.restore_session()
+    shell.navigation()
+    render_toasts()
+    wb = current_workbook()
+    parsed = None
     raw_deck = pd.DataFrame()
-    deck_info: Optional[Dict[str, Any]] = None
-    if file_bytes is not None:
-        wb_sha = bytes_sha256(file_bytes)
-        parsed = read_parsed_workbook(file_bytes, wb_sha)
+    deck_info = None
+    workbook_name = (wb or {}).get("name", "No workbook loaded")
+    if wb is not None:
+        parsed = read_parsed_workbook(wb["bytes"], wb["sha256"])
         if not parsed.get("error"):
-            # Before the date widget renders: a new workbook brings its own as-of date.
-            sync_as_of_with_workbook(parsed, wb_sha)
-            raw_deck, deck_info = derive_deck(
-                parsed,
-                wb_sha,
-                st.session_state.as_of_date.isoformat(),
-                bool(st.session_state.include_hidden),
-            )
-
+            sync_as_of_with_workbook(parsed, wb["sha256"])
+            raw_deck, deck_info = derive_deck(parsed, wb["sha256"], st.session_state.as_of_date.isoformat(), bool(st.session_state.include_hidden))
     render_controls_bar(workbook_name, parsed=parsed, deck_info=deck_info)
+    shell.render_meeting_date(st.session_state.as_of_date)
     process_status_history_upload()
-    if parsed is not None and not parsed.get("error"):
-        load_embedded_status_history_if_available(parsed, wb_sha, workbook_name)
-
-    if file_bytes is None:
+    if wb is None:
         render_no_workbook_loaded()
         return
-
     if parsed is None or parsed.get("error"):
-        st.error(f"Could not load workbook: {(parsed or {}).get('error') or 'unknown error'}")
+        st.error("Could not load this workbook. Upload a valid Excel workbook to continue.")
         return
-
+    load_embedded_status_history_if_available(parsed, wb["sha256"], workbook_name)
     if raw_deck.empty:
         st.warning("No Bridge or Term rows were found in the workbook.")
         return
-
-    loan_mods = parsed.get("loan_mods")
-    if loan_mods is None:
-        loan_mods = empty_loan_modifications()
-
-    deck = apply_overrides(raw_deck, ensure_override_store())
-    deck = add_status_staleness_columns(
-        deck=deck,
-        status_history=st.session_state.status_history,
-        meeting_date=st.session_state.as_of_date,
-        workbook_name=workbook_name,
-        history_sha=current_status_history_sha(),
-    )
-    filtered_deck = apply_filters(deck)
-
-    if filtered_deck.empty:
-        st.warning("No deals match the current filters.")
-        return
-
-    maybe_open_edit_dialog(deck, raw_deck)
-
-    selected_view = st.session_state.view_mode
-    if selected_view == "Overview":
-        render_overview_view(filtered_deck, st.session_state.as_of_date, deck_info)
-    elif selected_view == "Presentation":
-        render_presentation_view(filtered_deck, raw_deck, loan_mods)
-    elif selected_view == "Review":
-        render_review_view(filtered_deck, raw_deck)
-    elif selected_view == "Exports":
-        render_exports_view(
-            file_bytes=file_bytes,
-            workbook_name=workbook_name,
-            raw_deck=raw_deck,
-            deck=deck,
-            as_of_date=st.session_state.as_of_date,
-        )
+    base_rows = refresh_base_rows(parsed, wb["sha256"])
+    foreign = reconcile_overrides(base_rows, wb["sha256"])
+    deck = apply_overrides(raw_deck, native_overrides(), wb["sha256"])
+    deck = add_status_staleness_columns(deck, st.session_state.status_history, current_meeting_date(), workbook_name, history_sha=current_status_history_sha())
+    deck = cockpit.apply_reminder_rule(deck, st.session_state.status_history, current_meeting_date(), st.session_state.get("reminder_rule", "Status only"))
+    deck = mark_addressed_reminders(deck, native_overrides(), base_rows, st.session_state.reminder_confirmed, current_meeting_date().isoformat())
+    mods = parsed.get("loan_mods")
+    if mods is None:
+        mods = empty_loan_modifications()
+    ctx = AppContext(view=st.session_state.view_mode, wb=wb, parsed=parsed, deck_info=deck_info, raw_deck=raw_deck, deck=deck, filtered=deck, loan_mods=mods, as_of=st.session_state.as_of_date, base_rows=base_rows, foreign_overrides=foreign)
+    ctx.app_version = APP_VERSION
+    cockpit.render_settings(ctx, app)
+    if hasattr(meeting_work, "checkpoint_overrides"):
+        meeting_work.checkpoint_overrides(ctx, app)
+        meeting_work.render_settings(ctx, app)
+    with guard("Data sources"):
+        data_context = data_views.prepare_context(deck, parsed)
+        st.session_state["_data_context"] = data_context
+        data_views.render_sources(deck, parsed, data_context)
+    filtered = cockpit.apply_focus(apply_filters(deck), native_overrides())
+    full_keys = deck["deal_key"].astype(str).tolist()
+    filtered_keys = filtered["deal_key"].astype(str).tolist()
+    cursor = resolve_cursor(st.session_state.cursor, full_keys, filtered_keys, st.session_state.get("_last_agenda") or ())
+    st.session_state.cursor = cursor
+    ordered_full = cockpit.order_deck(deck, st.session_state.get("agenda_order", "Workbook"))
+    order = {str(key): (0, i) for i, key in enumerate(ordered_full["deal_key"])}
+    agenda, outside = displayed_agenda(filtered_keys, cursor, order)
+    st.session_state["_last_agenda"] = agenda
+    ctx.filtered, ctx.agenda_keys, ctx.cursor = filtered, agenda, cursor
+    ctx.cursor_outside, ctx.deck_keys = outside, frozenset(full_keys)
+    st.session_state["_app_context"] = ctx
+    with guard(ctx.view):
+        if ctx.view == "Overview":
+            render_overview_view(ctx)
+            live_data.render_landgorilla_overview(filtered, (st.session_state.get("_data_context") or {}).get("lg"))
+            cockpit.render_dashboard(ctx, app)
+        elif ctx.view == "Presentation":
+            render_presentation_view(ctx)
+        elif ctx.view == "Review":
+            render_review_view(ctx)
+        elif ctx.view == "Follow-ups":
+            meeting_work.render_followups(ctx, app)
+        elif ctx.view == "Wrap-up":
+            meeting_work.render_wrapup(ctx, app)
+            verified_exports.render_exports(ctx, app, meeting_work)
+        elif ctx.view == "Exports":
+            verified_exports.render_exports(ctx, app, meeting_work)
+    with guard("Dialog"):
+        render_active_dialog(ctx)
+    if hasattr(meeting_work, "checkpoint_overrides"):
+        meeting_work.checkpoint_overrides(ctx, app)
 
 
 if __name__ == "__main__":

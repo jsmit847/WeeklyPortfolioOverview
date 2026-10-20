@@ -1,0 +1,21 @@
+[server]
+maxUploadSize = 50
+enableXsrfProtection = true
+enableCORS = true
+
+[client]
+toolbarMode = "viewer"
+showErrorDetails = "type"
+
+[browser]
+gatherUsageStats = false
+
+[logger]
+level = "warning"
+
+[theme]
+primaryColor = "#007f78"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f2f6f7"
+textColor = "#173344"
+font = "sans serif"
