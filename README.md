@@ -58,6 +58,8 @@ The app matches a Land Gorilla file number using the prefix plus the selected wo
 
 Successful responses are cached to limit API traffic. Login failures back off; errors shown to viewers contain exception types rather than credential-bearing response text. Without configuration or when the service is unavailable, workbook views remain usable. The integration tests use a fake service; no live credentials are required for tests.
 
+Transient HTTP 500/502/503/504 and rate-limit responses receive up to three read attempts with bounded backoff. Requests use at most four workers. Persistent read errors pause automatic retries for one minute; Refresh retries immediately. A failed refresh retains the last successful values with an explicit last-known label and original fetch time. Partial responses identify the unavailable source fields.
+
 ## Bring more Salesforce data into the deck
 
 Add visible worksheets containing a `Deal Number`, `Opportunity Deal Loan Number` or `Loan Number` header. Matching rows appear on the relevant loan, without a Salesforce connection. A single-row extract can carry stage, next step, latest activity and links; a multi-row sheet can carry draw or servicing history. HTTP(S) link fields provide direct source links. Keep extract dates in the workbook so viewers can judge freshness.

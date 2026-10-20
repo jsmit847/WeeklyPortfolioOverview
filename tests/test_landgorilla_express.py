@@ -235,7 +235,7 @@ def test_fetch_uses_cache_until_forced(fake_lg):
     assert len(fake_lg.calls) > calls
 
 
-def test_errors_are_not_cached(fake_lg, monkeypatch):
+def test_errors_back_off_but_explicit_refresh_retries(fake_lg, monkeypatch):
     original = fake_lg.get
 
     def flaky(url, **kw):
@@ -247,7 +247,8 @@ def test_errors_are_not_cached(fake_lg, monkeypatch):
     first = app.lg_fetch_loans(settings(), ["rb010001"])
     assert first["rb010001"]["state"] == "error" and first["rb010001"]["error"] == "TimeoutError"
     monkeypatch.setattr(fake_lg, "get", original)
-    assert app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]["state"] == "ok"
+    assert app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]["state"] == "error"
+    assert app.lg_fetch_loans(settings(), ["rb010001"], force=True)["rb010001"]["state"] == "ok"
 
 
 def test_login_failure_backs_off_and_hides_secret(fake_lg):
@@ -469,3 +470,151 @@ def test_login_backoff_isolated_between_accounts(fake_lg):
     count = fake_lg.calls.count("/api/token")
     app.lg_fetch_loans(app.LGSettings(user="another-account", password="other"), ["rb010001"])
     assert fake_lg.calls.count("/api/token") == count + 1
+
+
+def test_lookup_http_500_recovers_after_bounded_retries(fake_lg, monkeypatch):
+    original, attempts = fake_lg.get, []
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def flaky(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            attempts.append(url)
+            if len(attempts) < 3:
+                return FakeResponse(500, {"error": "temporary server failure"})
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", flaky)
+    result = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert result["state"] == "ok" and result["overview"]["lg_loan_id"] == 501
+    assert len(attempts) == 3
+
+
+def test_persistent_500_keeps_last_success_and_does_not_spam_reruns(fake_lg, monkeypatch):
+    previous = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    original, attempts = fake_lg.get, []
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            attempts.append(url)
+            return FakeResponse(500, {"error": FAKE_PASSWORD})
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    failed = app.lg_fetch_loans(settings(), ["rb010001"], force=True)["rb010001"]
+    assert failed["stale"] is True and failed["overview"] == previous["overview"]
+    assert failed["fetched_at"] == previous["fetched_at"]
+    assert failed["refresh_error"] == "HTTP 500" and FAKE_PASSWORD not in str(failed)
+    assert len(attempts) == app.LG_READ_ATTEMPTS
+    again = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert again["stale"] and len(attempts) == app.LG_READ_ATTEMPTS
+
+
+def test_persistent_500_without_previous_data_remains_an_error(fake_lg, monkeypatch):
+    original, attempts = fake_lg.get, []
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            attempts.append(url)
+            return FakeResponse(500, None)
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    result = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert result["state"] == "error" and result["overview"] is None
+    app.lg_fetch_loans(settings(), ["rb010001"])
+    assert len(attempts) == 3
+
+
+def test_timeout_retries_and_recovers(fake_lg, monkeypatch):
+    import requests
+    original, attempts = fake_lg.get, []
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def flaky(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            attempts.append(url)
+            if len(attempts) < 3:
+                raise requests.Timeout("sensitive response omitted")
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", flaky)
+    assert app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]["state"] == "ok"
+    assert len(attempts) == 3
+
+
+def test_both_detail_requests_failing_do_not_cache_empty_success(fake_lg, monkeypatch):
+    original = fake_lg.get
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if "/loans/" in url or urlparse(url).path == "/api/clm/loan/501":
+            return FakeResponse(500, None)
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    result = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert result["state"] == "error" and result["overview"] is None
+
+
+def test_partial_detail_response_is_explicitly_labeled(fake_lg, monkeypatch):
+    original = fake_lg.get
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if "/loans/" in url:
+            return FakeResponse(500, None)
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    result = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert result["state"] == "ok" and result["overview"]["balance"] == 10_250_000
+    assert result["partial_errors"] == ["Construction details unavailable (HTTP 500)"]
+
+
+def test_rate_limit_retry_after_is_bounded(fake_lg, monkeypatch):
+    original, attempts, delays = fake_lg.get, [], []
+    monkeypatch.setattr(app.time, "sleep", delays.append)
+    def limited(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            attempts.append(url)
+            if len(attempts) == 1:
+                response = FakeResponse(429, None)
+                response.headers = {"Retry-After": "120"}
+                return response
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", limited)
+    assert app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]["state"] == "ok"
+    assert delays == [2.0]
+
+
+def test_batch_deadline_stops_queued_requests_without_network_call(fake_lg):
+    import requests
+    client = app.LGClient(settings(), session=fake_lg)
+    client.token()
+    count = len(fake_lg.calls)
+    client._read_deadline = app.time.monotonic() - 1
+    with pytest.raises(requests.Timeout, match="read budget"):
+        client.get_json("/api/clm/loan?fileNumber=rb010001")
+    assert len(fake_lg.calls) == count
+
+
+def test_app_http_500_keeps_workbook_usable(tmp_path, monkeypatch, fake_lg):
+    original = fake_lg.get
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            return FakeResponse(500, None)
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    at = make_app_test(tmp_path, monkeypatch).run()
+    assert not at.exception
+    assert "HTTP 500" in " ".join(str(w.value) for w in at.warning)
+    assert "Harbor View" in all_text(at)
+    at.sidebar.radio(key="view_mode").set_value("Overview").run()
+    assert not at.exception
+
+
+def test_app_failed_refresh_labels_last_known_data(tmp_path, monkeypatch, fake_lg):
+    at = make_app_test(tmp_path, monkeypatch).run()
+    original = fake_lg.get
+    monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
+    def failing(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            return FakeResponse(500, None)
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", failing)
+    next(button for button in at.button if button.label == "Refresh").click().run()
+    assert not at.exception
+    assert "Land Gorilla · last known" in all_text(at)
+    assert "not current live values" in " ".join(str(w.value) for w in at.warning)
+    assert "Land Gorilla (last successful fetch)" in all_text(at)

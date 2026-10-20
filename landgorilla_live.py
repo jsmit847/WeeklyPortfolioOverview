@@ -72,7 +72,11 @@ LG_TIMEZONE = "America/New_York"
 LG_CACHE_SECONDS = 30 * 60
 LG_NOT_FOUND_SECONDS = 30 * 60
 LG_LOGIN_BACKOFF_SECONDS = 10 * 60  # a failing login is not retried on every rerun (account lockouts)
-LG_MAX_WORKERS = 12
+LG_MAX_WORKERS = 4
+LG_READ_ATTEMPTS = 3
+LG_ERROR_RETRY_SECONDS = 60
+LG_BATCH_READ_SECONDS = 30
+LG_RETRY_STATUS = (429, 500, 502, 503, 504)
 LG_TIMEOUT_SECONDS = 30
 LG_STORE_MAX_LOANS = 5000
 LG_DEFAULT_LOAN_COLUMN = "deal_number"
@@ -450,18 +454,44 @@ class LGClient:
                 self._expires = time.time() + 1800
             return self._token
 
+    def _read(self, http, path, token):
+        """Retry transient read failures; never retry rejected credentials here."""
+        import requests
+
+        for attempt in range(LG_READ_ATTEMPTS):
+            response = None
+            deadline = getattr(self, "_read_deadline", None)
+            remaining = deadline - time.monotonic() if deadline is not None else LG_TIMEOUT_SECONDS
+            if remaining <= 0:
+                raise requests.Timeout("Land Gorilla read budget exhausted")
+            try:
+                response = http.get(
+                    f"{self.base_url}{path}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout=min(LG_TIMEOUT_SECONDS, max(0.1, remaining)), verify=self._settings.verify,
+                )
+                if response.status_code not in LG_RETRY_STATUS or attempt == LG_READ_ATTEMPTS - 1:
+                    return response
+            except (requests.Timeout, requests.ConnectionError):
+                if attempt == LG_READ_ATTEMPTS - 1:
+                    raise
+            delay = 0.4 * (2 ** attempt)
+            try:
+                retry_after = float((getattr(response, "headers", {}) or {}).get("Retry-After", 0))
+                delay = max(delay, min(retry_after, 2.0))
+            except (TypeError, ValueError):
+                pass
+            if deadline is not None:
+                delay = min(delay, max(0.0, deadline - time.monotonic()))
+            time.sleep(delay)
+
     def get_json(self, path: str, session=None) -> Tuple[int, object]:
         """GET a CLM path: (status code, parsed JSON or None). A 401 refreshes the token once."""
         http = session if session is not None else self._session
         status = 0
         for attempt in range(2):
             token = self.token(refresh=attempt > 0)
-            response = http.get(
-                f"{self.base_url}{path}",
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                timeout=LG_TIMEOUT_SECONDS,
-                verify=self._settings.verify,
-            )
+            response = self._read(http, path, token)
             status = int(response.status_code)
             if status == 401 and attempt == 0:
                 continue
@@ -489,8 +519,10 @@ def _lg_fetch_one(client: LGClient, settings: LGSettings, file_number: str, sess
         return _lg_result("not_found")
 
     template_path = f"/api/clm/pipelineReportTemplates/{quote(str(settings.template_id), safe='')}/loans/{quote(str(loan_id), safe='')}"
-    _, template = client.get_json(template_path, session=session)
-    _, summary = client.get_json(f"/api/clm/loan/{quote(str(loan_id), safe='')}", session=session)
+    template_status, template = client.get_json(template_path, session=session)
+    summary_status, summary = client.get_json(f"/api/clm/loan/{quote(str(loan_id), safe='')}", session=session)
+    if template is None and summary is None:
+        return _lg_result("error", error=f"Loan details HTTP {max(template_status, summary_status)}")
 
     overview = {"lg_loan_id": loan_id, "file_number": file_number, "template_ok": template is not None}
     overview.update(lg_parse_template_loan(template) if template is not None else {})
@@ -501,7 +533,11 @@ def _lg_fetch_one(client: LGClient, settings: LGSettings, file_number: str, sess
         to_finish=data.get("balanceToFinish"),
         last_approved_draw=_lg_date(data.get("lastApprovedDrawEffectiveDate")),
     )
-    return _lg_result("ok", overview)
+    result = _lg_result("ok", overview)
+    result["partial_errors"] = [label + f" (HTTP {code})" for label, code, payload in
+                                (("Construction details unavailable", template_status, template),
+                                 ("Loan balances unavailable", summary_status, summary)) if payload is None]
+    return result
 
 
 def lg_cached_result(file_number: Optional[str], now: Optional[float] = None, settings: Optional[LGSettings] = None) -> Optional[dict]:
@@ -510,10 +546,13 @@ def lg_cached_result(file_number: Optional[str], now: Optional[float] = None, se
         return None
     store = _lg_account_store(settings)
     with store["lock"]:
+        failure = store.get("read_failures", {}).get(file_number)
         hit = store["loans"].get(file_number)
+    if failure and (now or time.time()) - failure["checked_at"] < LG_ERROR_RETRY_SECONDS:
+        return failure
     if not hit:
         return None
-    ttl = LG_CACHE_SECONDS if hit["state"] == "ok" else LG_NOT_FOUND_SECONDS
+    ttl = LG_ERROR_RETRY_SECONDS if hit.get("partial_errors") else LG_CACHE_SECONDS if hit["state"] == "ok" else LG_NOT_FOUND_SECONDS
     return hit if (now or time.time()) - hit["fetched_at"] < ttl else None
 
 
@@ -563,6 +602,8 @@ def lg_fetch_loans(settings: LGSettings, file_numbers: Iterable[Optional[str]], 
     with store["lock"]:
         store["login_failure"] = None
 
+    # Bound the whole batch so an unavailable API cannot block the workbook view.
+    client._read_deadline = time.monotonic() + LG_BATCH_READ_SECONDS
     local = threading.local()
     worker_sessions = []
 
@@ -584,10 +625,22 @@ def lg_fetch_loans(settings: LGSettings, file_numbers: Iterable[Optional[str]], 
         _lg_close_sessions([client._session, *worker_sessions])
 
     with store["lock"]:
+        failures = store.setdefault("read_failures", {})
         for file_number in need:
             result = results[file_number]
             if result["state"] in ("ok", "not_found"):
                 store["loans"][file_number] = result
+                failures.pop(file_number, None)
+            else:
+                previous = store["loans"].get(file_number)
+                if previous and previous["state"] == "ok":
+                    result = {**previous, "stale": True, "refresh_error": result["error"]}
+                result = {**result, "checked_at": time.time()}
+                failures[file_number] = result
+                results[file_number] = result
+        if len(failures) > LG_STORE_MAX_LOANS:
+            for key in sorted(failures, key=lambda k: failures[k]["checked_at"])[:len(failures) - LG_STORE_MAX_LOANS]:
+                failures.pop(key, None)
         if len(store["loans"]) > LG_STORE_MAX_LOANS:
             oldest = sorted(store["loans"], key=lambda key: store["loans"][key]["fetched_at"])
             for key in oldest[: len(store["loans"]) - LG_STORE_MAX_LOANS]:
@@ -716,7 +769,8 @@ def render_landgorilla_panel(current_row: pd.Series, lg_ctx: Optional[LGContext]
     with st.container(border=True):
         head, action = st.columns([0.8, 0.2], vertical_alignment="center")
         with head:
-            st.markdown("##### :material/construction: Land Gorilla · live")
+            label = "last known" if result and result.get("stale") else "live"
+            st.markdown(f"##### :material/construction: Land Gorilla · {label}")
             details = [f"File {file_number}" if file_number else "No Land Gorilla loan number"]
             if result:
                 details.append(f"fetched {lg_fetched_text(result)}")
@@ -748,6 +802,10 @@ def render_landgorilla_panel(current_row: pd.Series, lg_ctx: Optional[LGContext]
             return
 
         overview = result["overview"]
+        if result.get("stale"):
+            st.warning(f"Refresh failed ({md_escape(result.get('refresh_error', 'no response'))}). Showing the last successful Land Gorilla values from {lg_fetched_text(result)}; these are not current live values.")
+        for message in result.get("partial_errors", []):
+            st.warning(md_escape(message) + ". Other available Land Gorilla data is shown below.")
         today = lg_today()
         derived = lg_derived(overview, today)
         project, duration = derived["project_pct"], derived["duration_pct"]
@@ -859,6 +917,7 @@ def build_landgorilla_table(deck: pd.DataFrame, lg_ctx: LGContext, today: dt.dat
                 "Workbook UPB": lg_number(row.get("upb")),
                 "LG due date": overview.get("due_date"),
                 "LG status": overview.get("status") or "",
+                "Source freshness": "Last known" if result.get("stale") else "Partial response" if result.get("partial_errors") else "Current fetch",
                 "Risk flags": list(overview.get("risk") or []),
                 "Checks": sum(1 for level, _ in checks if level in ("alert", "warn")),
             }
@@ -925,6 +984,9 @@ def render_landgorilla_sidebar(lg_ctx: Optional[LGContext], deck: pd.DataFrame) 
             st.warning(f"Unavailable ({md_escape(errors[0] or 'no response')}). Showing workbook data only.", icon=":material/cloud_off:")
         else:
             st.success(f"Connected · {ok_count} of {total} Bridge loans matched", icon=":material/cloud_done:")
+        stale_count = sum(bool(result.get("stale")) for result in lg_ctx.results.values())
+        if stale_count:
+            st.warning(f"{stale_count} loan(s) show last-known values because the latest refresh failed.")
         if latest:
             st.caption(f"Updated {lg_fetched_text({'fetched_at': latest})} · refreshes every {LG_CACHE_SECONDS // 60} min")
 

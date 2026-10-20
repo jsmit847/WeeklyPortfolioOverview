@@ -358,7 +358,8 @@ def render_current(row, deck, parsed, lg_ctx):
             if derived["to_finish"] is not None:
                 facts.append(f"{money(derived['to_finish'])} left to fund")
             if facts:
-                st.write("Land Gorilla (live): " + "; ".join(facts) + ".")
+                freshness = "last successful fetch" if result.get("stale") else "live"
+                st.write(f"Land Gorilla ({freshness}): " + "; ".join(facts) + ".")
         st.write(" ".join(today.sentences))
         st.badge(f"Workbook as of {as_of:%m/%d}", color="gray")
         if change.get("prior_date"):
