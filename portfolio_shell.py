@@ -7,9 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import streamlit as st
 
 
-VIEWS = {"Overview": "overview", "Presentation": "present", "Review": "review",
-         "Follow-ups": "follow-ups", "Wrap-up": "wrap-up", "Exports": "exports"}
-ICONS = ("dashboard", "present_to_all", "edit_note", "task_alt", "summarize", "download")
+VIEWS = {"Overview": "overview", "Presentation": "present", "Review": "review", "Exports": "exports"}
+ICONS = ("dashboard", "present_to_all", "edit_note", "download")
 
 
 def _page_frame():

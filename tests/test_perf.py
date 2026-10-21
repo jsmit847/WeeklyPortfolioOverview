@@ -52,8 +52,15 @@ def test_streaks_at_scale_are_fast_and_match_the_reference(app_module, scaled_by
             count, since, prompt), key
 
 
-def test_next_click_median_under_one_second(make_at, scaled_bytes):
+def test_next_click_median_under_one_second(make_at, scaled_bytes, monkeypatch):
+    import requests
+    calls = []
+    def unexpected_request(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Slide navigation must not contact Land Gorilla")
+    monkeypatch.setattr(requests.Session, "get", unexpected_request)
     at = make_at(scaled_bytes)
+    at.secrets["landgorilla"] = {"user": "synthetic-user", "password": "synthetic-password"}
     at.run()
     assert not at.exception
     timings = []
@@ -62,6 +69,7 @@ def test_next_click_median_under_one_second(make_at, scaled_bytes):
         button_by_label(at, "Next").click().run()
         timings.append(time.perf_counter() - start)
     assert not at.exception
+    assert calls == []
     assert progress_text(at) == "Agenda item 10 of 150"
     median = statistics.median(timings)
     assert median <= 1.0, f"median Next click {median:.2f}s ({[round(t, 2) for t in timings]})"

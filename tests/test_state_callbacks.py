@@ -118,6 +118,7 @@ def test_recognized_all_false_mod_match_flags_exclude_rows(app_module):
 def test_confirmation_and_undo_close_and_reopen_current_reminder(make_at):
     from app_helpers import button_by_label
     at = make_at()
+    at.session_state["show_update_reminders"] = True
     at.run()
     assert not at.exception
     key = at.session_state["cursor"]

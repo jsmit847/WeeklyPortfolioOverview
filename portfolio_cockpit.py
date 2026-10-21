@@ -193,7 +193,7 @@ def verify_workbook(original: bytes, exported: bytes, edits: dict, app) -> dict:
 
 
 def render_settings(ctx, app=None):
-    with st.sidebar.expander("Meeting settings", icon=":material/tune:"):
+    with st.sidebar.expander("Presentation settings", icon=":material/tune:"):
         st.selectbox("Agenda order", ORDER_OPTIONS, key="agenda_order", persist_state="session")
         owners = sorted({text(x) for x in ctx.deck.get("owner", []) if text(x)})
         # Prune options before the widget is created when a workbook changes.
@@ -201,7 +201,8 @@ def render_settings(ctx, app=None):
         st.multiselect("Owners", owners, key="owner_filter", persist_state="session")
         st.multiselect("Focus", ("Needs attention", "Modified loans", "Edited this meeting", "Past maturity", "Maturing within 30 days"), key="focus_filters", persist_state="session")
         st.toggle("Compact presentation", key="compact_presentation", persist_state="session")
-        st.segmented_control("Reminder rule", ["Status only", "Status + commentary"], default="Status only", required=True, key="reminder_rule", persist_state="session")
+        st.toggle("Show historical update reminders", key="show_update_reminders", persist_state="session",
+                  help="Optional. Repeated workbook text does not mean a loan was not discussed.")
         st.caption("← / → move between deals · E opens the editor. Shortcuts pause while typing.")
 
 
@@ -238,12 +239,9 @@ def render_deal(row, ctx, app=None):
         </style>""")
     checks = consistency_checks(row)
     if checks:
-        with st.expander(f"Source consistency · {len(checks)} checks", expanded=any(c["code"] == "STALE_PAYMENT_DATE" for c in checks)):
+        with st.expander(f"Source consistency · {len(checks)} checks", expanded=False):
             for check in checks:
                 st.caption(check["detail"])
-    flags = compute_flags(pd.DataFrame([row]))
-    if not flags.empty:
-        st.caption("Discussion signals: " + " · ".join(dict.fromkeys(flags["Rule"])))
 
 
 def render_dashboard(ctx, app=None):
@@ -251,7 +249,7 @@ def render_dashboard(ctx, app=None):
     if deck.empty:
         return
     flags = compute_flags(deck)
-    with st.expander("Portfolio intelligence", expanded=True, icon=":material/analytics:"):
+    with st.expander("Portfolio intelligence", expanded=False, icon=":material/analytics:"):
         cols = st.columns(3)
         cols[0].metric("Needs attention", flags["deal_key"].nunique(), border=True)
         delinquent = flags.loc[flags["Rule"] == "30+ DPD", "deal_key"]

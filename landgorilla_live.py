@@ -354,10 +354,6 @@ def lg_checks(row: Mapping[str, object], overview: Mapping[str, object], derived
         if idle is not None and idle >= LG_STALLED_DRAW_DAYS:
             checks.append(("warn", f"No draw in {idle:,} days while construction is {project:.0f}% complete."))
 
-    risk = [r for r in overview.get("risk") or [] if r]
-    if risk:
-        checks.append(("warn", "Land Gorilla risk flags: " + ", ".join(risk) + "."))
-
     if closed and upb is not None and upb > 0:
         checks.append(("warn", f"Land Gorilla status is '{overview.get('status')}' but the workbook shows UPB {fmt_money_exact(upb)}."))
 
@@ -513,8 +509,17 @@ def _lg_fetch_one(client: LGClient, settings: LGSettings, file_number: str, sess
     if payload is None:
         return _lg_result("not_found") if status == 404 else _lg_result("error", error=f"HTTP {status}")
 
-    items = lg_items_of(payload)
-    loan_id = items[0].get("id") if items and isinstance(items[0], dict) else None
+    items = [item for item in lg_items_of(payload) if isinstance(item, dict)]
+    exact = [item for item in items if norm_text(item.get("fileNumber")).casefold() == file_number.casefold()]
+    if len(exact) == 1:
+        match = exact[0]
+    elif len(items) == 1 and not norm_text(items[0].get("fileNumber")):
+        match = items[0]  # Some CLM responses omit fileNumber on a filtered lookup.
+    elif not items or (not exact and all(norm_text(item.get("fileNumber")) for item in items)):
+        return _lg_result("not_found")
+    else:
+        return _lg_result("error", error="Ambiguous loan match")
+    loan_id = match.get("id")
     if not loan_id:
         return _lg_result("not_found")
 
@@ -594,8 +599,12 @@ def lg_fetch_loans(settings: LGSettings, file_numbers: Iterable[Optional[str]], 
         error = lg_error_text(exc)
         with store["lock"]:
             store["login_failure"] = (time.time(), error)
-        for file_number in need:
-            results[file_number] = _lg_result("error", error=error)
+            for file_number in need:
+                previous = store["loans"].get(file_number)
+                result = ({**previous, "stale": True, "refresh_error": error}
+                          if previous and previous["state"] == "ok" else _lg_result("error", error=error))
+                results[file_number] = {**result, "checked_at": time.time()}
+                store.setdefault("read_failures", {})[file_number] = results[file_number]
         _lg_close_sessions([client._session])
         return results
 
@@ -681,7 +690,7 @@ def lg_refresh_cb(file_number: Optional[str]) -> None:
     settings = lg_settings()
     if settings is None or not file_number:
         return
-    lg_clear_login_backoff()
+    lg_clear_login_backoff(settings)
     lg_fetch_loans(settings, [file_number], force=True)
 
 
@@ -691,7 +700,7 @@ def lg_refresh_all_cb() -> None:
 
 
 def prepare_landgorilla_context(deck: pd.DataFrame) -> Optional[LGContext]:
-    """Fetch live Land Gorilla data for every Bridge deal once, then serve it from cache."""
+    """Read available snapshots only. Navigation must never perform API requests."""
     settings = lg_settings()
     if settings is None or deck.empty:
         return None
@@ -702,15 +711,19 @@ def prepare_landgorilla_context(deck: pd.DataFrame) -> Optional[LGContext]:
     loan_column = st.session_state["lg_loan_column"]
 
     deal_files = lg_deal_file_numbers(deck, loan_column, settings.file_prefix)
-    file_numbers = [fn for fn in deal_files.values() if fn]
-    force = bool(st.session_state.pop("_lg_force_all", False))
-    pending = file_numbers if force else [fn for fn in dict.fromkeys(file_numbers) if lg_cached_result(fn, settings=settings) is None]
-
-    if pending:
-        with st.spinner(f"Fetching live Land Gorilla data for {len(pending)} Bridge loan(s)…", show_time=True):
-            results = lg_fetch_loans(settings, file_numbers, force=force)
-    else:
-        results = lg_fetch_loans(settings, file_numbers)
+    store = _lg_account_store(settings)
+    results = {}
+    now = time.time()
+    with store["lock"]:
+        for fn in set(deal_files.values()) - {None}:
+            hit = store.get("read_failures", {}).get(fn) or store["loans"].get(fn)
+            failure = store.get("login_failure")
+            if hit is None and failure and now - failure[0] < LG_LOGIN_BACKOFF_SECONDS:
+                hit = {"state": "error", "overview": None, "fetched_at": failure[0], "error": failure[1]}
+            if hit is not None:
+                # Retain an expired snapshot for reference, with its original time.
+                # Only the selected loan's explicit Load/Refresh button uses the API.
+                results[fn] = {**hit, "cache_expired": now - hit["fetched_at"] >= LG_CACHE_SECONDS}
     return LGContext(settings=settings, loan_column=loan_column, deal_files=deal_files, results=results)
 
 
@@ -759,139 +772,70 @@ def render_lg_checks(checks: List[Tuple[str, str]]) -> None:
 
 
 def render_landgorilla_panel(current_row: pd.Series, lg_ctx: Optional[LGContext]) -> None:
-    """Live Land Gorilla construction data on Bridge slides."""
+    """Optional construction snapshot, loaded only by an explicit user action."""
     if lg_ctx is None or norm_text(current_row.get("sheet")) != "Bridge":
         return
-
     file_number, result = lg_result_for_row(current_row, lg_ctx)
     deal_key = str(current_row.get("deal_key"))
-
-    with st.container(border=True):
-        head, action = st.columns([0.8, 0.2], vertical_alignment="center")
-        with head:
-            label = "last known" if result and result.get("stale") else "live"
-            st.markdown(f"##### :material/construction: Land Gorilla · {label}")
-            details = [f"File {file_number}" if file_number else "No Land Gorilla loan number"]
-            if result:
-                details.append(f"fetched {lg_fetched_text(result)}")
-            st.caption(md_escape(" · ".join(details)))
-        with action:
-            st.button(
-                "Refresh",
-                key=f"lg_refresh::{deal_key}",
-                icon=":material/refresh:",
-                width="stretch",
-                on_click=lg_refresh_cb,
-                args=(file_number,),
-                disabled=not file_number,
-                help="Fetch this loan from Land Gorilla again",
-            )
-
+    with st.expander("Construction · Land Gorilla", expanded=False):
+        details = [f"File {file_number}" if file_number else "No Land Gorilla loan number"]
+        if result:
+            stamp = pd.Timestamp(result["fetched_at"], unit="s", tz="UTC").tz_convert(LG_TIMEZONE)
+            details.append(f"Retrieved {stamp:%m/%d/%Y %I:%M %p} ET")
+        st.caption(md_escape(" · ".join(details)))
+        st.button(
+            "Refresh construction data" if result else "Load construction data",
+            key=f"lg_refresh::{deal_key}", icon=":material/refresh:",
+            on_click=lg_refresh_cb, args=(file_number,), disabled=not file_number,
+            help="Request only this loan. Moving between slides never calls Land Gorilla.",
+        )
         if not file_number:
-            st.caption("This deal has no usable loan number for Land Gorilla. Pick the right column under Land Gorilla in the sidebar.")
+            st.caption("Select the loan-number column under Land Gorilla in the sidebar.")
             return
-        if result is None or result["state"] == "error":
-            error = (result or {}).get("error") or "no response"
-            st.warning(
-                f"Land Gorilla is unavailable right now ({md_escape(error)}). Showing workbook data only.",
-                icon=":material/cloud_off:",
-            )
+        if result is None:
+            st.caption("Load this loan when needed. Workbook figures are shown above.")
+            return
+        if result["state"] == "error":
+            st.caption(f"Construction data could not be loaded ({md_escape(result.get('error') or 'no response')}). Workbook figures remain available.")
             return
         if result["state"] == "not_found":
-            st.info(f"Not found in Land Gorilla (file number {md_escape(file_number)}).", icon=":material/search_off:")
+            st.caption("No matching Land Gorilla file was returned. Workbook figures remain available.")
             return
-
-        overview = result["overview"]
         if result.get("stale"):
-            st.warning(f"Refresh failed ({md_escape(result.get('refresh_error', 'no response'))}). Showing the last successful Land Gorilla values from {lg_fetched_text(result)}; these are not current live values.")
+            st.caption(f"Refresh failed ({md_escape(result.get('refresh_error') or 'no response')}). These are the last retrieved values; check the retrieval time above.")
+        elif result.get("cache_expired"):
+            st.caption("Saved snapshot; refresh to check for newer values.")
         for message in result.get("partial_errors", []):
-            st.warning(md_escape(message) + ". Other available Land Gorilla data is shown below.")
-        today = lg_today()
-        derived = lg_derived(overview, today)
+            st.caption(md_escape(message) + ". Available fields are shown below.")
+        overview = result["overview"]
+        derived = lg_derived(overview, lg_today())
         project, duration = derived["project_pct"], derived["duration_pct"]
-
-        bar_left, bar_right = st.columns(2)
-        with bar_left:
-            st.progress(
-                (project or 0.0) / 100,
-                text=f"Construction {project:.0f}% complete" if project is not None else "Construction progress not reported",
-            )
-        with bar_right:
-            st.progress(
-                (duration or 0.0) / 100,
-                text=f"Schedule {duration:.0f}% elapsed" if duration is not None else "Schedule progress not reported",
-            )
-
-        balance = derived["balance"]
-        upb = lg_number(current_row.get("upb"))
-        balance_delta = None
-        if balance is not None and upb is not None and abs(balance - upb) >= 1:
-            balance_delta = f"{'+' if balance > upb else '-'}{fmt_money_exact(abs(balance - upb))} vs workbook UPB"
-        draw_days = derived["days_since_draw"]
-        days_to_due = derived["days_to_due"]
-        if days_to_due is None:
-            due_delta = None
-        elif days_to_due < 0:
-            due_delta = f"{abs(days_to_due):,} days past"
-        else:
-            due_delta = f"in {days_to_due:,} days"
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("LG balance", fmt_money_exact(balance), delta=balance_delta, delta_color="off", delta_arrow="off", border=True)
-        m2.metric(
-            "Left to fund",
-            fmt_money_exact(derived["to_finish"]),
-            border=True,
-            help="Land Gorilla balance to finish (remaining construction holdback).",
-        )
-        m3.metric(
-            "Last draw",
-            fmt_date(overview.get("last_draw")),
-            delta=f"{draw_days:,} days ago" if draw_days is not None else None,
-            delta_color="off",
-            delta_arrow="off",
-            border=True,
-        )
-        m4.metric("LG due date", fmt_date(overview.get("due_date")), delta=due_delta, delta_color="off", delta_arrow="off", border=True)
-
-        gap = derived["gap_pts"]
-        badge_labels = [
-            overview.get("status"),
-            overview.get("program"),
-            derived["extension_days"] or None,
-            gap if gap is not None and gap >= LG_BEHIND_SCHEDULE_POINTS else None,
-            *(overview.get("risk") or []),
-        ]
-        if any(badge_labels):
-            with st.container(horizontal=True, gap="small"):
-                if overview.get("status"):
-                    st.badge(md_escape(overview["status"]), icon=":material/flag:", color="blue")
-                if overview.get("program"):
-                    st.badge(md_escape(overview["program"]), color="gray")
-                if derived["extension_days"]:
-                    st.badge(f"Extended {derived['extension_days']:,} days", icon=":material/update:", color="orange")
-                if gap is not None and gap >= LG_BEHIND_SCHEDULE_POINTS:
-                    st.badge(f"{gap:.0f} pts behind schedule", icon=":material/schedule:", color="orange")
-                for label in overview.get("risk") or []:
-                    st.badge(md_escape(label), icon=":material/warning:", color="red")
-
-        facts = []
-        location = ", ".join(x for x in [overview.get("city"), overview.get("state")] if x)
-        place = " · ".join(x for x in [overview.get("property"), location] if x)
-        if place:
-            facts.append(place)
-        if overview.get("funded_date"):
-            facts.append(f"Funded {fmt_date(overview['funded_date'])}")
-        if overview.get("last_approved_draw"):
-            facts.append(f"Last approved draw {fmt_date(overview['last_approved_draw'])}")
-        if overview.get("last_note_at"):
-            facts.append(f"Last LG note {fmt_date(overview['last_note_at'])}")
-        if overview.get("users"):
-            facts.append("Team: " + ", ".join(overview["users"][:4]))
-        if facts:
-            st.caption(md_escape(" · ".join(facts)))
-
-        render_lg_checks(lg_checks(current_row, overview, derived, today))
+        left, right = st.columns(2)
+        if project is not None:
+            left.progress(project / 100, text=f"Construction {project:.0f}% complete")
+        if duration is not None:
+            right.progress(duration / 100, text=f"Schedule {duration:.0f}% elapsed")
+        cols = st.columns(4)
+        cols[0].metric("LG balance", fmt_money_exact(derived["balance"]))
+        cols[1].metric("Construction holdback remaining", fmt_money_exact(derived["to_finish"]),
+                       help="Land Gorilla balanceToFinish; this is not the full unfunded loan commitment.")
+        cols[2].metric("Last approved draw", fmt_date(overview.get("last_approved_draw")))
+        cols[3].metric("LG due date", fmt_date(overview.get("due_date")))
+        if overview.get("status"):
+            st.caption("LG status: " + md_escape(overview["status"]))
+        labels = [label for label in overview.get("risk") or [] if label]
+        if labels:
+            st.caption("LG labels / instructions: " + md_escape(" · ".join(labels)))
+        # Source differences are observations, not automatic credit or servicing alerts.
+        comparisons = []
+        balance, upb = derived["balance"], lg_number(current_row.get("upb"))
+        if balance is not None and upb is not None and abs(balance - upb) > max(LG_BALANCE_TOLERANCE, abs(upb) * LG_BALANCE_TOLERANCE_PCT):
+            comparisons.append(f"LG balance {fmt_money_exact(balance)}; workbook UPB {fmt_money_exact(upb)}")
+        due, maturity = overview.get("due_date"), coerce_datetime_value(current_row.get("maturity_date"))
+        if isinstance(due, dt.date) and not pd.isna(maturity) and abs((pd.Timestamp(due) - pd.Timestamp(maturity).normalize()).days) > LG_DUE_DATE_TOLERANCE_DAYS:
+            comparisons.append(f"LG due date {fmt_date(due)}; workbook maturity {fmt_date(maturity)}")
+        for comparison in comparisons:
+            st.caption(md_escape(comparison) + ". Sources may have different effective dates.")
 
 
 def build_landgorilla_table(deck: pd.DataFrame, lg_ctx: LGContext, today: dt.date) -> pd.DataFrame:
@@ -917,8 +861,9 @@ def build_landgorilla_table(deck: pd.DataFrame, lg_ctx: LGContext, today: dt.dat
                 "Workbook UPB": lg_number(row.get("upb")),
                 "LG due date": overview.get("due_date"),
                 "LG status": overview.get("status") or "",
-                "Source freshness": "Last known" if result.get("stale") else "Partial response" if result.get("partial_errors") else "Current fetch",
-                "Risk flags": list(overview.get("risk") or []),
+                "Retrieved at": pd.Timestamp(result["fetched_at"], unit="s", tz="UTC").tz_convert(LG_TIMEZONE).strftime("%m/%d/%Y %I:%M %p ET"),
+                "Source freshness": "Last known" if result.get("stale") or result.get("cache_expired") else "Partial response" if result.get("partial_errors") else "Saved snapshot",
+                "LG labels / instructions": list(overview.get("risk") or []),
                 "Checks": sum(1 for level, _ in checks if level in ("alert", "warn")),
             }
         )
@@ -932,19 +877,14 @@ def render_landgorilla_overview(deck: pd.DataFrame, lg_ctx: Optional[LGContext])
     if lg_ctx is None or deck.empty or not (deck["sheet"] == "Bridge").any():
         return
 
-    st.subheader("Construction progress · Land Gorilla (live)")
     table = build_landgorilla_table(deck, lg_ctx, lg_today())
     bridge_count = int((deck["sheet"] == "Bridge").sum())
     if table.empty:
-        st.info(
-            "No Bridge loan in view matched a Land Gorilla loan yet. Check the Land Gorilla section in the sidebar.",
-            icon=":material/search_off:",
-        )
         return
-
-    st.caption(f"{len(table)} of {bridge_count} Bridge loans in view matched · sorted by how far behind schedule")
+    st.subheader("Construction snapshots · Land Gorilla")
+    st.caption(f"Saved data for {len(table)} of {bridge_count} Bridge loans. Load or refresh a loan from Presentation when needed.")
     st.dataframe(
-        table,
+        table.drop(columns=["Behind (pts)", "Checks", "Days since draw"], errors="ignore"),
         hide_index=True,
         width="stretch",
         column_config={
@@ -957,64 +897,20 @@ def render_landgorilla_overview(deck: pd.DataFrame, lg_ctx: Optional[LGContext])
             "LG balance": st.column_config.NumberColumn("LG balance", format="dollar"),
             "Workbook UPB": st.column_config.NumberColumn("Workbook UPB", format="dollar"),
             "LG due date": st.column_config.DateColumn("LG due date", format="MM/DD/YYYY"),
-            "Risk flags": st.column_config.ListColumn("Risk flags"),
+            "LG labels / instructions": st.column_config.ListColumn("LG labels / instructions"),
             "Checks": st.column_config.NumberColumn("Checks", help="Mismatches or warnings vs. the workbook", format="%d"),
         },
     )
 
 
 def render_landgorilla_sidebar(lg_ctx: Optional[LGContext], deck: pd.DataFrame) -> None:
-    with st.sidebar:
-        st.divider()
-        st.subheader("Land Gorilla")
+    with st.sidebar.expander("Land Gorilla"):
         if lg_ctx is None:
-            st.caption(
-                "Not configured. Add a [landgorilla] section with user and password to the app's Streamlit "
-                "secrets to show live construction data on Bridge slides."
-            )
+            st.caption("Not configured. Optional construction data uses the app's Land Gorilla secrets.")
             return
-
-        total = len(lg_ctx.deal_files)
-        states = {fn: (lg_ctx.results.get(fn) or {}).get("state") for fn in lg_ctx.deal_files.values() if fn}
-        ok_count = sum(1 for state in states.values() if state == "ok")
-        errors = [(lg_ctx.results.get(fn) or {}).get("error") for fn, state in states.items() if state == "error"]
-        latest = max((r["fetched_at"] for r in lg_ctx.results.values()), default=None)
-
-        if errors and not ok_count:
-            st.warning(f"Unavailable ({md_escape(errors[0] or 'no response')}). Showing workbook data only.", icon=":material/cloud_off:")
-        else:
-            st.success(f"Connected · {ok_count} of {total} Bridge loans matched", icon=":material/cloud_done:")
-        stale_count = sum(bool(result.get("stale")) for result in lg_ctx.results.values())
-        if stale_count:
-            st.warning(f"{stale_count} loan(s) show last-known values because the latest refresh failed.")
-        if latest:
-            st.caption(f"Updated {lg_fetched_text({'fetched_at': latest})} · refreshes every {LG_CACHE_SECONDS // 60} min")
-
+        st.caption("Construction data loads on request for the selected Bridge loan. Navigation uses saved snapshots only.")
         st.selectbox(
-            "Loan # column",
-            options=lg_loan_column_options(deck),
-            key="lg_loan_column",
+            "Loan # column", options=lg_loan_column_options(deck), key="lg_loan_column",
             format_func=lambda col: "Deal Number (default)" if col == LG_DEFAULT_LOAN_COLUMN else col,
             help=f"Land Gorilla file numbers are '{lg_ctx.settings.file_prefix}' + this number.",
         )
-        st.button("Refresh Land Gorilla data", icon=":material/refresh:", width="stretch", on_click=lg_refresh_all_cb)
-
-        names = deck.set_index("deal_key")["deal_name"].to_dict() if "deal_key" in deck.columns else {}
-        numbers = deck.set_index("deal_key")["deal_number"].to_dict() if "deal_key" in deck.columns else {}
-        unmatched = []
-        for deal_key, file_number in lg_ctx.deal_files.items():
-            state = states.get(file_number) if file_number else None
-            if state == "ok":
-                continue
-            reason = {"not_found": "Not in Land Gorilla", "error": "Error"}.get(state or "", "No loan #")
-            unmatched.append(
-                {
-                    "Deal": display_text(names.get(deal_key)),
-                    "Deal #": display_text(numbers.get(deal_key)),
-                    "File # tried": file_number or "-",
-                    "Result": reason,
-                }
-            )
-        if unmatched:
-            with st.expander(f"Not matched ({len(unmatched)})"):
-                st.dataframe(pd.DataFrame(unmatched), hide_index=True, width="stretch")

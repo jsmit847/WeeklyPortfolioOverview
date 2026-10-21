@@ -319,93 +319,28 @@ def commentary_diff(previous, current):
 
 
 def prepare_context(deck, parsed):
-    as_of = st.session_state.get("as_of_date")
-    reference = safe_date(as_of) or safe_date(parsed.get("reference_date")) or dt.date.today()
-    history = st.session_state.get("status_history", pd.DataFrame())
-    columns = {sheet: list(report["raw"].columns) for sheet, report in parsed.get("sheets", {}).items() if isinstance(report.get("raw"), pd.DataFrame)}
+    """Build local source context without network requests or meeting comparisons."""
     source_deck = comparison_deck(deck, parsed)
-    changes = compute_changes(source_deck, history, reference, columns, loan_mods=parsed.get("loan_mods"))
-    return {"lg": lg.prepare_landgorilla_context(source_deck), "changes": changes, "source_deck": source_deck,
-            "as_of": reference, "history": history, "supplemental": parsed.get("supplemental") or {}}
+    return {"lg": lg.prepare_landgorilla_context(source_deck), "source_deck": source_deck,
+            "supplemental": parsed.get("supplemental") or {}}
 
 
 def render_current(row, deck, parsed, lg_ctx):
-    """Render selected-row data only; workbook reads stay inside the cached parser."""
+    """Keep optional source details collapsed; the slide already shows the loan facts."""
     ctx = lg_ctx or {}
     seen_links = set()
-    as_of = ctx.get("as_of") or safe_date(parsed.get("reference_date")) or dt.date.today()
-    changes = ctx.get("changes")
-    change = {}
-    if isinstance(changes, pd.DataFrame) and not changes.empty:
-        found = changes[changes["deal_key"] == row.get("deal_key")]
-        change = found.iloc[0].to_dict() if not found.empty else {}
     record = raw_record(row, parsed)
     raw = ((parsed.get("sheets") or {}).get(text(row.get("sheet"))) or {}).get("raw")
     def column(header):
         return raw[header] if isinstance(raw, pd.DataFrame) and header in raw else None
-    today = build_loan_today(row, change, as_of=as_of)
-    file_number, result = lg.lg_result_for_row(row, ctx.get("lg"))
-    with st.container(border=True):
-        st.markdown(f"##### As it stands today · {as_of:%m/%d/%Y}")
-        if result and result.get("state") == "ok":
-            overview = result["overview"]
-            derived = lg.lg_derived(overview, lg.lg_today())
-            facts = []
-            if derived["project_pct"] is not None:
-                facts.append(f"{derived['project_pct']:.0f}% built")
-            if derived["duration_pct"] is not None:
-                facts.append(f"{derived['duration_pct']:.0f}% of the schedule elapsed")
-            if derived["to_finish"] is not None:
-                facts.append(f"{money(derived['to_finish'])} left to fund")
-            if facts:
-                freshness = "last successful fetch" if result.get("stale") else "live"
-                st.write(f"Land Gorilla ({freshness}): " + "; ".join(facts) + ".")
-        st.write(" ".join(today.sentences))
-        st.badge(f"Workbook as of {as_of:%m/%d}", color="gray")
-        if change.get("prior_date"):
-            st.badge(f"History: last meeting {change['prior_date']:%m/%d}", color="gray")
-        mods = parsed.get("loan_mods")
-        if isinstance(mods, pd.DataFrame) and not mods.empty:
-            candidates = mods
-            if "deal_number_key" in mods:
-                matching = mods[mods["deal_number_key"].map(canonical) == canonical(row.get("deal_number"))]
-                if not matching.empty:
-                    candidates = matching
-            modified = [safe_date(value) for field in ("Last Modified Date", "System Modstamp")
-                        if field in candidates for value in candidates[field]]
-            modified = [day for day in modified if day is not None]
-            if modified:
-                st.badge(f"Salesforce mods: modified {max(modified):%m/%d}", color="gray")
-        documents = box_documents(row)
-        if not documents.empty:
-            latest = documents["modified"].max()
-            st.badge(f"Box: latest file {latest:%m/%d}", color="gray")
-        for header in st.session_state.get("pinned_fields", []):
-            st.caption(f"{header}: {format_field(header, record.get(header), column(header))}")
-        for label, url in quick_links(record, row):
-            if (label, url) not in seen_links:
-                seen_links.add((label, url))
-                st.link_button(label, url)
-        headers = dated_headers(record, as_of)["UPB"]
-        values = [number(record.get(col)) for _, col in headers]
-        if len(values) >= 3 and all(v is not None for v in values):
-            st.metric("Workbook UPB history", money(values[-1]), chart_data=values, chart_type="line", border=True)
     lg.render_landgorilla_panel(row, ctx.get("lg"))
-    render_changes(row, change)
-    history = ctx.get("history")
-    if isinstance(history, pd.DataFrame) and "deal_key" in history:
-        records = history[history["deal_key"] == row.get("deal_key")]
-        if not records.empty:
-            with st.expander("Deal history"):
-                cols = [c for c in ("meeting_date", "status", "owner", "commentary") if c in records]
-                st.dataframe(records[cols].sort_values("meeting_date", ascending=False), hide_index=True, width="stretch")
+    for label, url in quick_links(record, row):
+        seen_links.add((label, url))
+        st.link_button(label, url)
     for name, frame in ctx.get("supplemental", {}).items():
         matches = frame[frame["_deal_match"] == canonical(row.get("deal_number"))].drop(columns="_deal_match")
         if matches.empty:
             continue
-        date_cols = [c for c in matches if pd.api.types.is_datetime64_any_dtype(matches[c])]
-        if date_cols:
-            matches = matches.sort_values(date_cols[0], ascending=False)
         with st.expander(f"From '{name}' · {len(matches)} row(s)"):
             st.dataframe(matches, hide_index=True, width="stretch")
             for item in matches.to_dict("records"):
@@ -415,6 +350,8 @@ def render_current(row, deck, parsed, lg_ctx):
                         st.link_button(label, url)
     render_box_documents(row)
     with st.expander(f"All workbook fields ({len(record)})"):
+        for header in st.session_state.get("pinned_fields", []):
+            st.caption(f"{header}: {format_field(header, record.get(header), column(header))}")
         query = st.text_input("Search workbook fields", key="workbook_field_search")
         rows = [{"Field": key, "Value": format_field(key, value, column(key))} for key, value in record.items()
                 if not query or query.casefold() in (key + " " + text(value)).casefold()]

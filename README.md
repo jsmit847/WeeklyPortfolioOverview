@@ -1,6 +1,6 @@
 # Weekly Portfolio Meeting Deck
 
-A Streamlit meeting workspace for Bridge and Term portfolios. Upload the weekly Excel workbook, review the current loan picture, capture edits and follow-ups, and download a verified workbook for the next meeting.
+A Streamlit deck for Bridge and Term portfolio meetings. Upload the weekly Excel workbook, cycle through loans, edit status or commentary when needed, and download the checked workbook.
 
 ## Run locally
 
@@ -16,14 +16,13 @@ Upload a workbook through the sidebar. For a local default, set `WPO_DEFAULT_WOR
 
 ## Meeting workflow
 
-1. Check **Overview** for workbook readiness, missing owners, attention signals, balance composition and the maturity wall. Set the meeting date separately from the workbook data date.
-2. Use **Presentation** to move through the agenda. Type, owner, search and focus filters carry between views. Choose workbook order, owner groups, attention first, maturity or balance order. The selected deal remains stable when filters change.
-3. Read **As it stands today**, the source consistency checks and Land Gorilla panel. Expand workbook fields, comparison history and supplemental sheets when needed. Workbook and live values keep their source labels.
-4. Edit status, owner or commentary from the loan editor, or commit individual cells in **Review**. Empty fields stay empty. Edits apply to the loaded workbook; loading a different file prompts a keep/discard decision.
-5. Capture actions, decisions and notes, mark meeting outcomes, and review the open register in **Follow-ups**.
-6. Review **Wrap-up**, download minutes or an Outlook draft, and use **Exports → Prepare and verify export**. Download the checked workbook and carry it forward into the next meeting.
+1. Use **Overview** for balances, maturities and the loan modification list.
+2. Use **Presentation** to move through loans with Previous/Next or the jump picker. Arrow keys navigate; **E** opens the editor. Filters and the selected loan persist between views.
+3. Read the workbook KPIs, deal snapshot and AM commentary. Optional construction data, loan modifications and additional workbook fields are collapsed. Open **Construction · Land Gorilla** and click **Load construction data** only when needed.
+4. Save status, owner or commentary edits in the loan editor or **Review**. Notes and attendance are optional in the meeting itself; the app does not require a capture, follow-up or wrap-up workflow.
+5. Use **Exports → Prepare and verify export**, then download the checked workbook. Only saved edits are applied. Existing status history is preserved; exporting does not add a snapshot for every loan.
 
-Arrow keys navigate the presentation; **E** opens the editor. Keyboard shortcuts pause while typing. Compact presentation, pinned fields and agenda settings are available in the sidebar.
+Historical update reminders are off by default. They can be enabled under Presentation settings, but repeated workbook text does not establish whether a loan was discussed. The app does not create a meeting journal, timer, action register or meeting recovery link. Download your edited workbook before ending the session.
 
 ## Workbook contract
 
@@ -39,7 +38,7 @@ The `_Status History` schema remains:
 meeting_date, sheet, deal_number, deal_key, status, owner, commentary, workbook_name, saved_at
 ```
 
-Application-owned meeting sheets are hidden in the exported workbook. Preparing again updates the current meeting rather than adding duplicate snapshots. Edits use OOXML cell replacements so untouched formulas, their cached values and workbook formatting survive export. Entered text beginning with `=` is stored as literal text. Generated CSV downloads neutralize spreadsheet formulas.
+Existing hidden sheets are preserved. No follow-up, progress or minutes sheets are generated. Edits use OOXML cell replacements so untouched formulas, their cached values and workbook formatting survive export. Entered text beginning with `=` is stored as literal text. Generated CSV downloads neutralize spreadsheet formulas.
 
 ## Land Gorilla
 
@@ -54,11 +53,13 @@ verify = true
 # file_prefix = "rb0"
 ```
 
-The app matches a Land Gorilla file number using the prefix plus the selected workbook loan-number column. The sidebar reports matched and unmatched loans, connection status and refresh controls. Panels show construction progress against schedule, balances, funding remaining, draw activity, due dates and risk labels. Disagreements with workbook amounts and dates are shown explicitly.
+The app matches a Land Gorilla file number using the prefix plus the selected workbook loan-number column. Requests use the same token, filtered loan lookup, pipeline template and loan-summary endpoints shown in the supplied notebook. Explicit file-number matches take priority; ambiguous responses are rejected.
 
-Successful responses are cached to limit API traffic. Login failures back off; errors shown to viewers contain exception types rather than credential-bearing response text. Without configuration or when the service is unavailable, workbook views remain usable. The integration tests use a fake service; no live credentials are required for tests.
+**No API requests run during slide navigation, Review, Overview or Exports.** Load/Refresh requests only the selected Bridge loan. The collapsed panel shows construction and schedule percentages, balances, holdback remaining, approved draw date and LG due date. LG labels and instructions are neutral source metadata. Unavailable data is described inside the panel, without a page-level alert. Workbook values remain available independently.
 
-Transient HTTP 500/502/503/504 and rate-limit responses receive up to three read attempts with bounded backoff. Requests use at most four workers. Persistent read errors pause automatic retries for one minute; Refresh retries immediately. A failed refresh retains the last successful values with an explicit last-known label and original fetch time. Partial responses identify the unavailable source fields.
+Saved snapshots retain their original retrieval time. Expired snapshots and failed refreshes are identified rather than represented as current. Requests retry transient server errors and rate limits with bounded backoff. Errors contain exception types/status codes, never raw response bodies or credential-bearing exception text.
+
+See [the notebook findings and safe local diagnostic](docs/data-sources.md) for the available LG and FCI fields, observed endpoint permissions and a command to diagnose one affected loan. FCI is not connected live in this app; its current servicing figures come from the workbook.
 
 ## Bring more Salesforce data into the deck
 
@@ -66,11 +67,9 @@ Add visible worksheets containing a `Deal Number`, `Opportunity Deal Loan Number
 
 Box document discovery, when enabled, reads local file metadata from an explicitly configured folder. It does not read document contents. Box Drive must be available on the computer running Streamlit; a local desktop folder is not available to Community Cloud.
 
-## Recovery and privacy
+## Session edits
 
-The recovery controls provide portable meeting backups and undo/redo for saved edits. Local disk autosave is opt-in and should point to a private folder; it is not a shared editing service. Recovery is checked against the workbook fingerprint before applying edits. Download a recovery file and the verified workbook before ending a meeting or restarting the hosting process.
-
-The app does not send email. The Outlook download creates a draft `.eml` for review in the mail client. Meeting notes and exports can contain portfolio information; store them in the same controlled location as the source workbook.
+Saved edits stay in the Streamlit session. Export the workbook before restarting the app or ending the session. Loading a different workbook protects edits with an explicit keep/discard decision. Credentials and local portfolio inputs are excluded from Git.
 
 ## Checks and deployment
 

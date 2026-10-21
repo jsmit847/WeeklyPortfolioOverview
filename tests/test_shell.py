@@ -17,6 +17,6 @@ def test_sidebar_navigation_and_native_pages_stay_in_sync():
     assert not at.exception
     assert at.session_state["view_mode"] == "Overview"
     assert any(m.value == "Selected: Overview" for m in at.markdown)
-    at.sidebar.radio(key="view_mode").set_value("Wrap-up").run()
+    at.sidebar.radio(key="view_mode").set_value("Exports").run()
     assert not at.exception
-    assert any(m.value == "Selected: Wrap-up" for m in at.markdown)
+    assert any(m.value == "Selected: Exports" for m in at.markdown)

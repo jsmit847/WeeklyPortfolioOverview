@@ -30,7 +30,6 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 import landgorilla_live as live_data
-import meeting_workspace as meeting_work
 import portfolio_cockpit as cockpit
 import portfolio_data_views as data_views
 import portfolio_exports as verified_exports
@@ -38,7 +37,7 @@ import portfolio_shell as shell
 
 
 APP_TITLE = "Weekly Portfolio Meeting Deck"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 APP_DIR = Path(__file__).resolve().parent
 
 # Privacy-safe event log: key=value events with counts, sha prefixes and deal keys only
@@ -4574,7 +4573,10 @@ def render_controls_bar(
             on_change=close_dialog_cb,
             placeholder="e.g. 10007, Harbor, Alice Chen",
         )
-        st.toggle("Update reminders only", key="stale_only", persist_state="session", on_change=close_dialog_cb)
+        if st.session_state.get("show_update_reminders", False):
+            st.toggle("Update reminders only", key="stale_only", persist_state="session", on_change=close_dialog_cb)
+        else:
+            st.session_state.stale_only = False
         # A callback: it runs before the widgets exist, so their keys can be written.
         st.button(
             "Reset filters",
@@ -4702,14 +4704,16 @@ def render_overview_view(ctx: AppContext) -> None:
         help=f"0–{MATURITY_WATCH_DAYS} days after the as-of date",
         border=True,
     )
-    m7.metric("Update reminders", fmt_int(stale_count), help=reminder_metric_help(addressed_count), border=True)
+    if st.session_state.get("show_update_reminders", False):
+        m7.metric("Update reminders", fmt_int(stale_count), help=reminder_metric_help(addressed_count), border=True)
     caption = balances_caption(ctx.as_of, ctx.deck_info)
     parts = active_filter_parts()
     if parts:
         caption += " · Filtered: " + ", ".join(md_escape(part) for part in parts)
     st.caption(caption)
 
-    render_status_history_notice(deck)
+    if st.session_state.get("show_update_reminders", False):
+        render_status_history_notice(deck)
 
     loan_mod_spotlight = build_loan_mod_spotlight_dataframe(deck)
     if not loan_mod_spotlight.empty:
@@ -4756,7 +4760,7 @@ def render_overview_view(ctx: AppContext) -> None:
     left, right = st.columns([1.15, 0.85], gap="large")
     with left:
         st.subheader("Agenda queue")
-        st.dataframe(build_agenda_dataframe(deck), hide_index=True, width="stretch")
+        st.dataframe(build_agenda_dataframe(deck), hide_index=True, width="stretch", column_config={"Update Reminder": None} if not st.session_state.get("show_update_reminders", False) else None)
 
     with right:
         st.subheader("Upcoming timing")
@@ -5621,7 +5625,7 @@ def render_presentation_view(ctx: AppContext) -> None:
             render_agenda_jump(deck, current_idx)
         with top_prompt:
             with st.popover("Prompts", icon=":material/lightbulb:", width="stretch"):
-                render_html_prompt_panel((live_data.lg_presenter_prompts(current_row, (st.session_state.get("_data_context") or {}).get("lg")) + build_presenter_prompts(current_row))[:6])
+                render_html_prompt_panel(build_presenter_prompts(current_row)[:6])
         with top_edit:
             st.button("Edit status", type="primary", width="stretch", on_click=open_dialog_cb, args=(DIALOG_EDIT, deal_key), shortcut="E")
         st.progress(progress_value, text=f"Agenda item {current_idx + 1} of {total_count}")
@@ -5630,11 +5634,6 @@ def render_presentation_view(ctx: AppContext) -> None:
     render_html_hero(current_row, current_idx, total_count)
 
     render_html_kpi_strip(build_presentation_kpis(current_row))
-    with guard("Current loan picture"):
-        data_views.render_current(current_row, ctx.deck, ctx.parsed, st.session_state.get("_data_context"))
-        cockpit.render_deal(current_row, ctx, sys.modules[__name__])
-    with guard("Meeting capture"):
-        meeting_work.render_deal(ctx, current_row, sys.modules[__name__])
 
     # KPIs first, then the collapsible loan modifications section with the
     # button/dropdown toggle to switch between each modification on the loan.
@@ -5660,7 +5659,8 @@ def render_presentation_view(ctx: AppContext) -> None:
         render_html_field_panel("Capital profile", build_capital_items(current_row))
 
     with right:
-        render_html_status_check_panel(current_row)
+        if st.session_state.get("show_update_reminders", False):
+            render_html_status_check_panel(current_row)
         render_html_commentary_panel(current_row.get("commentary"))
 
         with st.expander("Nearby agenda", expanded=False):
@@ -5669,7 +5669,6 @@ def render_presentation_view(ctx: AppContext) -> None:
             agenda_slice = deck.iloc[start:end].copy()
             agenda_slice.insert(0, "Agenda #", range(start + 1, end + 1))
             agenda_slice["Current"] = agenda_slice["deal_key"].map(lambda value: "Current" if value == deal_key else "")
-            agenda_slice["Update Reminder"] = agenda_slice["status_needs_update_prompt"].map(lambda value: "Yes" if bool(value) else "")
             agenda_slice["Loan Mods"] = agenda_slice["loan_mod_count"].map(lambda value: fmt_int(value) if int(value or 0) else "")
             agenda_slice["UPB"] = agenda_slice["upb"].map(lambda value: fmt_money(value, decimals=0))
             st.dataframe(
@@ -5680,7 +5679,6 @@ def render_presentation_view(ctx: AppContext) -> None:
                         "sheet",
                         "deal_name",
                         "deal_number",
-                        "Update Reminder",
                         "Loan Mods",
                         "status",
                         "owner",
@@ -5700,6 +5698,11 @@ def render_presentation_view(ctx: AppContext) -> None:
             )
 
 
+    with guard("Source details"):
+        data_views.render_current(current_row, ctx.deck, ctx.parsed, st.session_state.get("_data_context"))
+        cockpit.render_deal(current_row, ctx, sys.modules[__name__])
+
+
 # -----------------------------------------------------------------------------
 # Review and exports
 # -----------------------------------------------------------------------------
@@ -5712,7 +5715,7 @@ def render_review_view(ctx: AppContext) -> None:
     review_df = build_review_dataframe(ctx.filtered)
     editor_key = f"review_editor::{st.session_state.review_editor_version}"
     row_keys = ctx.filtered["deal_key"].astype(str).tolist()
-    st.data_editor(review_df, key=editor_key, width="stretch", hide_index=True, column_order=list(REVIEW_COLUMN_ORDER), disabled=[column for column in REVIEW_COLUMN_ORDER if column not in REVIEW_EDITABLE_COLUMNS], on_change=commit_review_cb, args=(editor_key, row_keys), column_config={"AM Commentary": st.column_config.TextColumn("AM Commentary", width="large", max_chars=COMMENTARY_MAX_CHARS), "Status": st.column_config.TextColumn("Status", width="medium"), "Owner": st.column_config.TextColumn("Owner", width="medium")})
+    st.data_editor(review_df, key=editor_key, width="stretch", hide_index=True, column_order=[c for c in REVIEW_COLUMN_ORDER if c != "Update Reminder" or st.session_state.get("show_update_reminders", False)], disabled=[column for column in REVIEW_COLUMN_ORDER if column not in REVIEW_EDITABLE_COLUMNS], on_change=commit_review_cb, args=(editor_key, row_keys), column_config={"AM Commentary": st.column_config.TextColumn("AM Commentary", width="large", max_chars=COMMENTARY_MAX_CHARS), "Status": st.column_config.TextColumn("Status", width="medium"), "Owner": st.column_config.TextColumn("Owner", width="medium")})
 
 def render_exports_view(
     file_bytes: bytes,
@@ -5825,8 +5828,10 @@ def main() -> None:
     configure_logging()
     init_state()
     app = sys.modules[__name__]
-    if hasattr(meeting_work, "restore_session"):
-        meeting_work.restore_session()
+    # Old meeting links may carry a recovery token; the deck no longer creates or
+    # restores a meeting journal. Workbook edits remain in this Streamlit session.
+    if "m" in st.query_params:
+        del st.query_params["m"]
     shell.navigation()
     render_toasts()
     wb = current_workbook()
@@ -5864,9 +5869,8 @@ def main() -> None:
     ctx = AppContext(view=st.session_state.view_mode, wb=wb, parsed=parsed, deck_info=deck_info, raw_deck=raw_deck, deck=deck, filtered=deck, loan_mods=mods, as_of=st.session_state.as_of_date, base_rows=base_rows, foreign_overrides=foreign)
     ctx.app_version = APP_VERSION
     cockpit.render_settings(ctx, app)
-    if hasattr(meeting_work, "checkpoint_overrides"):
-        meeting_work.checkpoint_overrides(ctx, app)
-        meeting_work.render_settings(ctx, app)
+    if not st.session_state.get("show_update_reminders", False):
+        deck["status_needs_update_prompt"] = False
     with guard("Data sources"):
         data_context = data_views.prepare_context(deck, parsed)
         st.session_state["_data_context"] = data_context
@@ -5892,17 +5896,10 @@ def main() -> None:
             render_presentation_view(ctx)
         elif ctx.view == "Review":
             render_review_view(ctx)
-        elif ctx.view == "Follow-ups":
-            meeting_work.render_followups(ctx, app)
-        elif ctx.view == "Wrap-up":
-            meeting_work.render_wrapup(ctx, app)
-            verified_exports.render_exports(ctx, app, meeting_work)
         elif ctx.view == "Exports":
-            verified_exports.render_exports(ctx, app, meeting_work)
+            verified_exports.render_exports(ctx, app)
     with guard("Dialog"):
         render_active_dialog(ctx)
-    if hasattr(meeting_work, "checkpoint_overrides"):
-        meeting_work.checkpoint_overrides(ctx, app)
 
 
 if __name__ == "__main__":

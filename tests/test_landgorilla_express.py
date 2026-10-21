@@ -67,6 +67,7 @@ class FakeLG:
 
     def __init__(self):
         self.calls = []
+        self.loan_lookups = []
         self.token_status = 200
         self.tokens_issued = 0
         self.expired_tokens = set()
@@ -129,6 +130,7 @@ class FakeLG:
         if not token or token in self.expired_tokens:
             return FakeResponse(401, {"error": "expired"})
         if path == "/api/clm/loan":
+            self.loan_lookups.append(query.get("fileNumber", [""])[0])
             loan_id = self.loans.get(query.get("fileNumber", [""])[0])
             return FakeResponse(200, {"data": {"items": [{"id": loan_id}] if loan_id else []}})
         if path.startswith("/api/clm/pipelineReportTemplates/437/loans/"):
@@ -308,7 +310,7 @@ def test_checks_flag_every_disagreement():
     assert checks[0][0] == "alert" and "Past the Land Gorilla due date" in checks[0][1]
     for expected in ("vs workbook maturity", "Land Gorilla balance $8,100,000 vs workbook UPB $7,000,000",
                      "Construction 40% complete with 75% of the schedule elapsed", "No draw in 120 days",
-                     "risk flags: Over budget", "Last Land Gorilla note was 75 days ago"):
+                     "Last Land Gorilla note was 75 days ago"):
         assert expected in text, expected
     assert "nan" not in text.lower() and "none" not in text.lower()
 
@@ -387,45 +389,82 @@ def all_text(at) -> str:
     return " ".join(parts)
 
 
-def test_bridge_slide_shows_live_land_gorilla_panel(tmp_path, monkeypatch, fake_lg):
-    at = make_app_test(tmp_path, monkeypatch)
-    at.run()
-    assert not at.exception, [e.value for e in at.exception]
-
-    sidebar_success = " ".join(str(s.value) for s in at.sidebar.success)
-    assert "Connected · 2 of 3 Bridge loans matched" in sidebar_success
-    text = all_text(at)
-    assert "Land Gorilla · live" in text and "File rb010001" in text
-    assert "Construction 62% complete" in " ".join(str(p.proto.text) for p in at.get("progress"))
-    labels = [m.label for m in at.metric]
-    assert {"LG balance", "Left to fund", "Last draw", "LG due date"} <= set(labels)
-    assert FAKE_PASSWORD not in text
-
-
-def test_bridge_slide_flags_disagreements_and_not_found(tmp_path, monkeypatch, fake_lg):
-    at = make_app_test(tmp_path, monkeypatch)
-    at.run()
-    jump_lg(at, "Sunset")
-    warnings = " ".join(str(w.value) for w in at.warning)
-    errors = " ".join(str(e.value) for e in at.error)
-    assert "Past the Land Gorilla due date" in errors
-    assert r"Land Gorilla balance \$8,100,000 vs workbook UPB \$7,000,000" in warnings
-    jump_lg(at, "Maple")
-    assert "Not found in Land Gorilla (file number rb010002)" in " ".join(str(i.value) for i in at.info)
+def load_construction(at):
+    next(button for button in at.button if button.label == "Load construction data").click().run()
     assert not at.exception
 
 
-def test_term_slide_and_overview(tmp_path, monkeypatch, fake_lg):
-    at = make_app_test(tmp_path, monkeypatch)
-    at.run()
+def test_bridge_slide_loads_only_selected_loan_on_request(tmp_path, monkeypatch, fake_lg):
+    at = make_app_test(tmp_path, monkeypatch).run()
+    assert not at.exception
+    assert fake_lg.calls == []
+    panel = next(exp for exp in at.expander if exp.label == "Construction · Land Gorilla")
+    assert not panel.proto.expanded
+    load_construction(at)
+    text = all_text(at)
+    assert "File rb010001" in text
+    assert "Construction 62% complete" in " ".join(str(p.proto.text) for p in at.get("progress"))
+    assert {"LG balance", "Construction holdback remaining", "Last approved draw", "LG due date"} <= {m.label for m in at.metric}
+    assert fake_lg.loan_lookups == ["rb010001"]
+    assert FAKE_PASSWORD not in text
+
+
+def test_bridge_slide_shows_neutral_metadata_and_source_differences(tmp_path, monkeypatch, fake_lg):
+    fake_lg.templates[503]["riskLabel"] = ["GUC", "10% Retainage", "PERMITS REQUIRED"]
+    at = make_app_test(tmp_path, monkeypatch).run()
+    jump_lg(at, "Sunset")
+    assert fake_lg.calls == []
+    load_construction(at)
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert r"LG balance \$8,100,000; workbook UPB \$7,000,000" in captions
+    assert "LG labels / instructions: GUC" in captions
+    assert "10% Retainage" in captions
+    assert not at.error and not at.warning
+    jump_lg(at, "Maple")
+    load_construction(at)
+    assert "No matching Land Gorilla file was returned" in all_text(at)
+    assert not at.exception
+
+
+def test_term_slide_and_overview_use_snapshots_only(tmp_path, monkeypatch, fake_lg):
+    at = make_app_test(tmp_path, monkeypatch).run()
+    load_construction(at)
+    jump_lg(at, "Sunset")
+    load_construction(at)
+    count = len(fake_lg.calls)
     jump_lg(at, "Bayside")
-    assert "Land Gorilla · live" not in all_text(at)  # Term loans are not in Land Gorilla
+    assert not any(b.label.endswith("construction data") for b in at.button)
     at.sidebar.radio[0].set_value("Overview").run()
-    assert not at.exception, [e.value for e in at.exception]
-    assert any("Construction progress · Land Gorilla (live)" in str(s.value) for s in at.subheader)
+    assert not at.exception
+    assert len(fake_lg.calls) == count
     frames = [df.value for df in at.dataframe]
     lg_frame = next(f for f in frames if "Built" in f.columns)
-    assert list(lg_frame["Deal #"]) == ["10003", "10001"]  # most behind schedule first
+    assert set(lg_frame["Deal #"]) == {"10003", "10001"}
+
+
+def test_configured_api_never_runs_during_navigation_or_editing(tmp_path, monkeypatch, fake_lg):
+    # Empty, expired and failed caches must not trigger automatic retries anywhere.
+    import landgorilla_live as live
+    at = make_app_test(tmp_path, monkeypatch).run()
+    assert not at.exception and not fake_lg.calls
+    for loan in ("Maple", "Sunset", "Bayside", "Harbor"):
+        jump_lg(at, loan)
+        assert not at.exception and not fake_lg.calls
+    cfg = live.lg_settings(SECRETS["landgorilla"])
+    store = live._lg_account_store(cfg)
+    store["loans"]["rb010001"] = {"state": "ok", "fetched_at": 1, "overview": overview_for(501)}
+    at.run()
+    assert "Saved snapshot" in all_text(at) and not fake_lg.calls
+    store.setdefault("read_failures", {})["rb010001"] = {
+        "state": "error", "fetched_at": 1, "checked_at": 1, "overview": None, "error": "HTTP 500"}
+    for view in ("Overview", "Review", "Exports", "Presentation"):
+        at.sidebar.radio[0].set_value(view).run()
+        assert not at.exception and not fake_lg.calls
+    next(b for b in at.button if b.label.startswith("Edit status")).click().run()
+    assert not at.exception and not fake_lg.calls
+    assert set(at.sidebar.radio[0].options) == {"Overview", "Presentation", "Review", "Exports"}
+    assert "m" not in at.query_params
+    assert not any("Meeting capture" in e.label or "Meeting backup" in e.label for e in at.expander)
 
 
 def test_not_configured_changes_nothing(tmp_path, monkeypatch, fake_lg):
@@ -442,8 +481,10 @@ def test_failing_login_keeps_the_meeting_running(tmp_path, monkeypatch, fake_lg)
     at = make_app_test(tmp_path, monkeypatch)
     at.run()
     assert not at.exception
-    assert "Unavailable (HTTPError 401)" in " ".join(str(w.value) for w in at.sidebar.warning)
-    assert "Land Gorilla is unavailable right now" in " ".join(str(w.value) for w in at.warning)
+    assert fake_lg.calls == []
+    load_construction(at)
+    assert "HTTPError 401" in all_text(at)
+    assert not at.warning and not at.error
     assert FAKE_PASSWORD not in all_text(at)
     at.sidebar.radio[0].set_value("Overview").run()
     assert not at.exception
@@ -462,6 +503,42 @@ def test_cache_isolated_after_settings_change(fake_lg):
     result = app.lg_fetch_loans(other, ["rb010001"])
     assert fake_lg.calls.count("/api/token") == count + 1
     assert result["rb010001"]["state"] == "error"
+
+
+@pytest.mark.parametrize("items,state,loan_id", [
+    ([{"id": 503, "fileNumber": "rb010003"}, {"id": 501, "fileNumber": "RB010001"}], "ok", 501),
+    ([{"id": 503, "fileNumber": "rb010003"}], "not_found", None),
+    ([{"id": 501}, {"id": 503}], "error", None),
+])
+def test_lookup_does_not_select_an_unrelated_or_ambiguous_loan(fake_lg, monkeypatch, items, state, loan_id):
+    original = fake_lg.get
+    def lookup(url, **kwargs):
+        if urlparse(url).path == "/api/clm/loan":
+            return FakeResponse(200, {"data": {"items": items}})
+        return original(url, **kwargs)
+    monkeypatch.setattr(fake_lg, "get", lookup)
+    result = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    assert result["state"] == state
+    assert (result.get("overview") or {}).get("lg_loan_id") == loan_id
+
+
+def test_failed_login_on_refresh_preserves_and_labels_previous_snapshot(fake_lg):
+    previous = app.lg_fetch_loans(settings(), ["rb010001"])["rb010001"]
+    fake_lg.token_status = 401
+    failed = app.lg_fetch_loans(settings(), ["rb010001"], force=True)["rb010001"]
+    assert failed["stale"] and failed["refresh_error"] == "HTTPError 401"
+    assert failed["fetched_at"] == previous["fetched_at"]
+    assert failed["overview"] == previous["overview"]
+
+
+def test_diagnostic_output_omits_sensitive_values():
+    from tools.diagnose_landgorilla import report
+    overview = {"balance": 1234567, "borrower": "Private borrower", "file_number": "rb099999", "project_pct": 0}
+    result = {"state": "ok", "overview": overview, "error": ""}
+    summary = report(result, [{"endpoint": "/api/clm/loan/<id>", "status": 200}])
+    assert summary["fields_present"]["balance"] and summary["fields_present"]["project_pct"]
+    assert not summary["fields_present"]["due_date"]
+    assert "1234567" not in str(summary) and "Private borrower" not in str(summary) and "rb099999" not in str(summary)
 
 
 def test_login_backoff_isolated_between_accounts(fake_lg):
@@ -598,7 +675,9 @@ def test_app_http_500_keeps_workbook_usable(tmp_path, monkeypatch, fake_lg):
     monkeypatch.setattr(fake_lg, "get", failing)
     at = make_app_test(tmp_path, monkeypatch).run()
     assert not at.exception
-    assert "HTTP 500" in " ".join(str(w.value) for w in at.warning)
+    load_construction(at)
+    assert "HTTP 500" in all_text(at)
+    assert not at.warning and not at.error
     assert "Harbor View" in all_text(at)
     at.sidebar.radio(key="view_mode").set_value("Overview").run()
     assert not at.exception
@@ -606,6 +685,7 @@ def test_app_http_500_keeps_workbook_usable(tmp_path, monkeypatch, fake_lg):
 
 def test_app_failed_refresh_labels_last_known_data(tmp_path, monkeypatch, fake_lg):
     at = make_app_test(tmp_path, monkeypatch).run()
+    load_construction(at)
     original = fake_lg.get
     monkeypatch.setattr(app.time, "sleep", lambda seconds: None)
     def failing(url, **kwargs):
@@ -613,8 +693,8 @@ def test_app_failed_refresh_labels_last_known_data(tmp_path, monkeypatch, fake_l
             return FakeResponse(500, None)
         return original(url, **kwargs)
     monkeypatch.setattr(fake_lg, "get", failing)
-    next(button for button in at.button if button.label == "Refresh").click().run()
+    next(button for button in at.button if button.label == "Refresh construction data").click().run()
     assert not at.exception
-    assert "Land Gorilla · last known" in all_text(at)
-    assert "not current live values" in " ".join(str(w.value) for w in at.warning)
-    assert "Land Gorilla (last successful fetch)" in all_text(at)
+    assert "These are the last retrieved values" in all_text(at)
+    assert "Refresh failed (HTTP 500)" in all_text(at)
+    assert not at.warning and not at.error

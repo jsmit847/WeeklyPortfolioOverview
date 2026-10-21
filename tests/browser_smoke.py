@@ -54,7 +54,9 @@ def main():
                         assert page.locator('[data-testid="stException"]').count() == 0, page.locator('[data-testid="stException"]').inner_text()
 
                     idle()
-                    assert page.get_by_text("As it stands today", exact=False).count()
+                    assert page.get_by_text("Deal snapshot", exact=True).count()
+                    assert page.get_by_role("link", name="Follow-ups", exact=True).count() == 0
+                    assert page.get_by_role("link", name="Wrap-up", exact=True).count() == 0
                     page.get_by_role("button", name=re.compile(r"^Edit status")).click()
                     page.get_by_role("dialog").wait_for()
                     page.keyboard.press("Escape")
@@ -66,9 +68,7 @@ def main():
                     page.get_by_role("link", name="Overview", exact=True).click()
                     idle()
                     assert page.get_by_text("Portfolio intelligence", exact=True).count()
-                    page.get_by_role("link", name="Follow-ups", exact=True).click()
-                    idle()
-                    page.get_by_role("link", name="Wrap-up", exact=True).click()
+                    page.get_by_role("link", name="Review", exact=True).click()
                     idle()
                     page.get_by_role("link", name="Exports", exact=True).click()
                     idle()
