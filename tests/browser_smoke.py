@@ -15,7 +15,7 @@ import tempfile
 import time
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from sample_workbook import build_sample_workbook_bytes
 
 
@@ -53,10 +53,25 @@ def main():
                         page.wait_for_function("document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'", timeout=120000)
                         assert page.locator('[data-testid="stException"]').count() == 0, page.locator('[data-testid="stException"]').inner_text()
 
+                    page.get_by_text("Deal snapshot", exact=True).wait_for(timeout=60000)
                     idle()
                     assert page.get_by_text("Deal snapshot", exact=True).count()
                     assert page.get_by_role("link", name="Follow-ups", exact=True).count() == 0
                     assert page.get_by_role("link", name="Wrap-up", exact=True).count() == 0
+                    filters = page.locator(".st-key-top_filters")
+                    assert filters.is_visible()
+                    assert filters.get_by_text("Version 2.7.2", exact=True).count()
+                    filters.get_by_text("Term", exact=True).click()
+                    idle()
+                    expect(page.locator(".rt-eyebrow")).to_have_text(re.compile(r"^Term"), timeout=20000)
+                    filters.get_by_role("textbox").fill("Bayside")
+                    filters.get_by_role("textbox").press("Enter")
+                    idle()
+                    expect(page.locator(".rt-hero-title")).to_have_text("Bayside Rental Portfolio", timeout=20000)
+                    filters.get_by_role("button", name="Reset filters", exact=False).click()
+                    idle()
+                    expect(filters.get_by_role("textbox")).to_have_value("", timeout=20000)
+                    page.screenshot(path=str(Path(tempfile.gettempdir()) / "wpo-presentation-smoke.png"), full_page=True)
                     page.get_by_role("button", name=re.compile(r"^Edit status")).click()
                     page.get_by_role("dialog").wait_for()
                     page.keyboard.press("Escape")

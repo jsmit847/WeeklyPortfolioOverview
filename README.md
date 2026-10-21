@@ -17,7 +17,7 @@ Upload a workbook through the sidebar. For a local default, set `WPO_DEFAULT_WOR
 ## Meeting workflow
 
 1. Use **Overview** for balances, maturities and the loan modification list.
-2. Use **Presentation** to move through loans with Previous/Next or the jump picker. Arrow keys navigate; **E** opens the editor. Filters and the selected loan persist between views.
+2. Use the top **All / Bridge / Term**, search and **Reset filters** controls, then move through loans with Previous/Next or the jump picker. The top controls stay synchronized with the sidebar. Arrow keys navigate; **E** opens the editor.
 3. Read the workbook KPIs, deal snapshot and AM commentary. Optional construction data, loan modifications and additional workbook fields are collapsed. Open **Construction · Land Gorilla** and click **Load construction data** only when needed.
 4. Save status, owner or commentary edits in the loan editor or **Review**. Notes and attendance are optional in the meeting itself; the app does not require a capture, follow-up or wrap-up workflow.
 5. Use **Exports → Prepare and verify export**, then download the checked workbook. Only saved edits are applied. Existing status history is preserved; exporting does not add a snapshot for every loan.
@@ -82,3 +82,5 @@ python -m pytest -q -m slow
 The suite uses synthetic workbooks and mocked Land Gorilla requests. CI checks Windows and Linux on Python 3.11–3.13, includes pandas 2 compatibility and runs weekly against the allowed dependency ranges. An optional browser smoke check uses Playwright with Edge: `python tests/browser_smoke.py`.
 
 Streamlit Community Cloud can deploy `portfolio_meeting_app.py` from `main`. Configure credentials through the hosting service's secrets UI. The repository includes a 50 MB upload limit, viewer toolbar, restricted error details and disabled usage telemetry.
+
+Verify the **Version** shown in the hosted top filter bar after pushing; a successful GitHub push or test run does not verify the hosted runtime. If Community Cloud still serves an older version, save/download any session edits, then use the owner's **Manage app → Reboot app** control. Check the displayed version again after the reboot. The source must point to `main/portfolio_meeting_app.py`.

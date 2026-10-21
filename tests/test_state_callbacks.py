@@ -134,3 +134,28 @@ def test_confirmation_and_undo_close_and_reopen_current_reminder(make_at):
     ctx = at.session_state["_app_context"]
     row = ctx.deck.loc[ctx.deck["deal_key"] == key].iloc[0]
     assert bool(row["status_needs_update_prompt"])
+
+
+def test_top_filters_select_portfolio_search_and_reset_in_sync_with_sidebar(make_at):
+    at = make_at().run()
+    assert not at.exception
+    at.button_group(key="top_sheet_filter").set_value("Term").run()
+    assert not at.exception
+    assert at.session_state["sheet_filter"] == "Term"
+    assert at.sidebar.button_group(key="sheet_filter").value == "Term"
+    ctx = at.session_state["_app_context"]
+    assert set(ctx.filtered.sheet) == {"Term"} and ctx.cursor.startswith("Term::")
+    at.text_input(key="top_search_query").set_value("Bayside").run()
+    assert not at.exception
+    assert at.sidebar.text_input(key="search_query").value == "Bayside"
+    assert set(at.session_state["_app_context"].filtered.deal_number) == {"20001"}
+    at.sidebar.text_input(key="search_query").set_value("no matching loan").run()
+    assert not at.exception
+    assert at.text_input(key="top_search_query").value == "no matching loan"
+    assert at.session_state["_app_context"].filtered.empty
+    at.button(key="top_reset_filters").click().run()
+    assert not at.exception
+    assert at.button_group(key="top_sheet_filter").value == "All"
+    assert at.sidebar.button_group(key="sheet_filter").value == "All"
+    assert at.text_input(key="top_search_query").value == ""
+    assert len(at.session_state["_app_context"].filtered) == 10

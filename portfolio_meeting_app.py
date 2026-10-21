@@ -37,7 +37,7 @@ import portfolio_shell as shell
 
 
 APP_TITLE = "Weekly Portfolio Meeting Deck"
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.7.2"
 APP_DIR = Path(__file__).resolve().parent
 
 # Privacy-safe event log: key=value events with counts, sha prefixes and deal keys only
@@ -3833,6 +3833,34 @@ def reset_filters_cb() -> None:
     close_dialog_cb()
 
 
+def top_filters_cb() -> None:
+    """Apply the visible filters before sidebar widgets are created on the rerun."""
+    st.session_state.sheet_filter = st.session_state.get("top_sheet_filter") or "All"
+    st.session_state.search_query = st.session_state.get("top_search_query", "")
+    st.session_state.cursor = None
+    st.session_state.jump_to = None
+    close_dialog_cb()
+
+
+def render_top_filters() -> None:
+    # Separate widget keys keep these controls synchronized with the sidebar.
+    st.session_state.top_sheet_filter = st.session_state.sheet_filter
+    st.session_state.top_search_query = st.session_state.search_query
+    with st.container(border=True, key="top_filters"):
+        portfolio, search, reset = st.columns([1.7, 3.3, 1], vertical_alignment="bottom")
+        with portfolio:
+            st.segmented_control("Portfolio type", options=list(SHEET_FILTER_OPTIONS),
+                                 key="top_sheet_filter", required=True, width="stretch",
+                                 on_change=top_filters_cb)
+        with search:
+            st.text_input(SEARCH_LABEL, key="top_search_query", on_change=top_filters_cb,
+                          placeholder="Search loan number, name, borrower or owner")
+        with reset:
+            st.button("Reset filters", key="top_reset_filters", on_click=reset_filters_cb,
+                      width="stretch", icon=":material/filter_alt_off:")
+        st.caption(f"Version {APP_VERSION}")
+
+
 def confirm_reminder_cb(deal_key: str, meeting_iso: str) -> None:
     """'Confirm still accurate': the update reminder is addressed for this meeting."""
     confirmed = dict(st.session_state.get("reminder_confirmed") or {})
@@ -5875,6 +5903,7 @@ def main() -> None:
         data_context = data_views.prepare_context(deck, parsed)
         st.session_state["_data_context"] = data_context
         data_views.render_sources(deck, parsed, data_context)
+    render_top_filters()
     filtered = cockpit.apply_focus(apply_filters(deck), native_overrides())
     full_keys = deck["deal_key"].astype(str).tolist()
     filtered_keys = filtered["deal_key"].astype(str).tolist()
