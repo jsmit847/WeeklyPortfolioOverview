@@ -38,6 +38,8 @@ The `_Status History` schema remains:
 meeting_date, sheet, deal_number, deal_key, status, owner, commentary, workbook_name, saved_at
 ```
 
+A status-history CSV backup uploaded in the sidebar is validated and **merged** into the workbook's own history: for the same meeting date and deal, the row with the later `saved_at` wins. Any other CSV (for example the agenda export) is rejected and the current history is kept; removing the upload returns to the workbook's history. Exports rewrite `_Status History` only when a merged backup changed it; otherwise the generator's sheet is left exactly as it was, including extra columns and a very-hidden state.
+
 Existing hidden sheets are preserved. No follow-up, progress or minutes sheets are generated. Edits use OOXML cell replacements so untouched formulas, their cached values and workbook formatting survive export. Entered text beginning with `=` is stored as literal text. Generated CSV downloads neutralize spreadsheet formulas.
 
 ## Land Gorilla

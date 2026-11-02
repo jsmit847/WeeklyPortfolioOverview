@@ -60,7 +60,7 @@ def main():
                     assert page.get_by_role("link", name="Wrap-up", exact=True).count() == 0
                     filters = page.locator(".st-key-top_filters")
                     assert filters.is_visible()
-                    assert filters.get_by_text("Version 2.7.2", exact=True).count()
+                    assert filters.get_by_text("Version 2.7.3", exact=True).count()
                     filters.get_by_text("Term", exact=True).click()
                     idle()
                     expect(page.locator(".rt-eyebrow")).to_have_text(re.compile(r"^Term"), timeout=20000)

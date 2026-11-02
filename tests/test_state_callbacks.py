@@ -103,8 +103,9 @@ def test_switching_to_workbook_without_embedded_history_clears_prior_source(app_
     assert state.status_history.empty
     assert state.uploaded_status_history_name == ""
     assert state.embedded_status_history_signature == "embedded:second"
-    app.store_status_history(app.normalize_status_history(old), "manual.csv")
-    state.uploaded_status_history = object()
+    # An uploaded CSV backup is merged into whichever workbook is loaded next.
+    state["_uploaded_history"] = app.normalize_status_history(old)
+    state["_uploaded_history_name"] = "manual.csv"
     app.load_embedded_status_history_if_available({"hidden_sheets": {}}, "third", "third.xlsx")
     assert len(state.status_history) == 1 and state.uploaded_status_history_name == "manual.csv"
 

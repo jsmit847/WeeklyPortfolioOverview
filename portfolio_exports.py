@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +24,12 @@ def fingerprint(ctx, state) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def export_filename(workbook_name: str, meeting_date: dt.date) -> str:
+    """'<workbook>_meeting_<date>.xlsx', without stacking suffixes when last week's export is reused."""
+    stem = re.sub(r"(?:_meeting_\d{4}-\d{2}-\d{2})+$", "", Path(workbook_name).stem) or "Portfolio Overview"
+    return f"{stem}_meeting_{meeting_date.isoformat()}.xlsx"
+
+
 def prepare_export(ctx, app, state, workspace=None) -> dict:
     meeting_date = state.get("meeting_date", ctx.as_of)
     if not isinstance(meeting_date, dt.date):
@@ -32,26 +39,33 @@ def prepare_export(ctx, app, state, workspace=None) -> dict:
     history = state.get("status_history")
     if history is None:
         history = app.empty_status_history()
+    # Rewrite _Status History only when the session's history differs from the workbook's
+    # own (a CSV backup was merged in). Otherwise the generator's sheet stays byte-for-byte,
+    # including any extra columns, unreadable rows and its hidden/veryHidden state.
+    source_history = app.embedded_status_history(getattr(ctx, "parsed", None))
+    rewrite_history = not history.empty and app.frame_sha256(app.normalize_status_history(history)) != app.frame_sha256(source_history)
     result = app.update_workbook_bytes(ctx.wb["bytes"], edits)
-    if not history.empty:
+    if rewrite_history:
         result = app.write_status_history_sheet_to_workbook_bytes(result, history)
     if workspace is not None and hasattr(workspace, "enrich_workbook"):
         result = workspace.enrich_workbook(ctx, result)
     checked = cockpit.verify_workbook(ctx.wb["bytes"], result, edits, app)
     workbook = load_workbook(io.BytesIO(result), read_only=True, data_only=False)
     try:
-        if not history.empty:
+        if rewrite_history:
             sheet = workbook[app.STATUS_HISTORY_SHEET_NAME]
             headers = [c.value for c in next(sheet.iter_rows(max_row=1))]
-            if headers != app.STATUS_HISTORY_COLUMNS or sheet.sheet_state != "hidden":
+            if headers != app.STATUS_HISTORY_COLUMNS or sheet.sheet_state not in ("hidden", "veryHidden"):
                 raise ValueError("The exported status history schema is invalid.")
             if sum(1 for _ in sheet.iter_rows(min_row=2)) != len(history):
                 raise ValueError("The exported status history row count is invalid.")
+        elif not source_history.empty and app.STATUS_HISTORY_SHEET_NAME not in workbook.sheetnames:
+            raise ValueError("The exported workbook lost its status history.")
     finally:
         workbook.close()
     agenda = app.build_agenda_dataframe(ctx.deck)
     return {"fingerprint": fingerprint(ctx, state), "workbook": result,
-            "filename": f"{Path(ctx.workbook_name).stem}_meeting_{meeting_date.isoformat()}.xlsx",
+            "filename": export_filename(ctx.workbook_name, meeting_date),
             "history": app.status_history_to_csv_bytes(history),
             "updates": app.export_overrides_csv(ctx.raw_deck, ctx.deck),
             "agenda": cockpit.safe_csv(agenda), "verification": checked}

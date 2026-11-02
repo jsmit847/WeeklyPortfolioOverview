@@ -37,7 +37,7 @@ import portfolio_shell as shell
 
 
 APP_TITLE = "Weekly Portfolio Meeting Deck"
-APP_VERSION = "2.7.2"
+APP_VERSION = "2.7.3"
 APP_DIR = Path(__file__).resolve().parent
 
 # Privacy-safe event log: key=value events with counts, sha prefixes and deal keys only
@@ -1113,13 +1113,80 @@ def normalize_status_history(history_df: Optional[pd.DataFrame]) -> pd.DataFrame
     return out.reset_index(drop=True)
 
 
-def read_status_history_csv(file_obj) -> pd.DataFrame:
+def _read_history_csv_raw(file_obj) -> pd.DataFrame:
     try:
-        df = pd.read_csv(file_obj, dtype=str, keep_default_na=False)
+        return pd.read_csv(file_obj, dtype=str, keep_default_na=False, encoding="utf-8-sig")
     except UnicodeDecodeError:
         file_obj.seek(0)
-        df = pd.read_csv(file_obj, encoding="latin-1", dtype=str, keep_default_na=False)
-    return normalize_status_history(df)
+        return pd.read_csv(file_obj, encoding="latin-1", dtype=str, keep_default_na=False)
+
+
+def read_status_history_csv(file_obj) -> pd.DataFrame:
+    return normalize_status_history(_read_history_csv_raw(file_obj))
+
+
+NOT_HISTORY_FILE_MESSAGE = (
+    "Not a status-history file. It needs meeting_date, status and deal_key "
+    "(or sheet and deal_number) columns; the current history was kept."
+)
+
+
+def history_upload_frame(data: bytes) -> pd.DataFrame:
+    """Validated, normalized rows of an uploaded status-history CSV.
+
+    Raises ValueError for any other CSV (e.g. the agenda export), so a wrong file can
+    never replace the workbook's history.
+    """
+    try:
+        raw = _read_history_csv_raw(io.BytesIO(data))
+    except (ValueError, pd.errors.ParserError) as exc:
+        raise ValueError(NOT_HISTORY_FILE_MESSAGE) from exc
+    raw.columns = [norm_label(col) for col in raw.columns]
+    columns = set(raw.columns)
+    if not {"meeting_date", "status"} <= columns or not ("deal_key" in columns or {"sheet", "deal_number"} <= columns):
+        raise ValueError(NOT_HISTORY_FILE_MESSAGE)
+    if {"sheet", "deal_number"} <= columns:
+        derived = [get_override_key(sheet, number) for sheet, number in zip(raw["sheet"], raw["deal_number"])]
+        if "deal_key" in columns:
+            raw["deal_key"] = raw["deal_key"].where(raw["deal_key"].map(norm_label) != "", derived)
+        else:
+            raw["deal_key"] = derived
+    frame = normalize_status_history(raw)
+    if frame.empty:
+        raise ValueError("The status-history file has no readable rows (meeting date, deal and status); the current history was kept.")
+    return frame
+
+
+def merge_status_history_frames(existing: Optional[pd.DataFrame], incoming: Optional[pd.DataFrame]) -> Tuple[pd.DataFrame, int]:
+    """Union of two histories. For the same (meeting_date, deal_key), the row with the
+    later saved_at wins and ties keep the existing row. Returns (merged, incoming rows used)."""
+    existing = normalize_status_history(existing)
+    incoming = normalize_status_history(incoming)
+    if incoming.empty:
+        return existing, 0
+    if existing.empty:
+        return incoming, len(incoming)
+    both = pd.concat([existing.assign(_rank=1), incoming.assign(_rank=0)], ignore_index=True)
+    both = both.sort_values(["saved_at", "_rank"], kind="stable")
+    merged = both.drop_duplicates(["meeting_date", "deal_key"], keep="last")
+    used = int((merged["_rank"] == 0).sum())
+    return normalize_status_history(merged.drop(columns="_rank")), used
+
+
+def refresh_effective_status_history() -> int:
+    """Effective history = the workbook's embedded history plus any uploaded CSV backup.
+
+    Returns how many uploaded rows were added or replaced."""
+    embedded = st.session_state.get("_embedded_history")
+    uploaded = st.session_state.get("_uploaded_history")
+    embedded_name = st.session_state.get("_embedded_history_name", "")
+    if uploaded is None or uploaded.empty:
+        store_status_history(embedded if embedded is not None else empty_status_history(), embedded_name)
+        return 0
+    merged, used = merge_status_history_frames(embedded, uploaded)
+    csv_name = st.session_state.get("_uploaded_history_name", "CSV backup")
+    store_status_history(merged, f"{embedded_name} + {csv_name}" if embedded_name else csv_name)
+    return used
 
 
 def store_status_history(history: pd.DataFrame, source_name: str) -> None:
@@ -1224,25 +1291,19 @@ def load_embedded_status_history_if_available(
     """
     Auto-load status history from the workbook itself.
 
-    Manual CSV upload still wins. Embedded workbook history is used only when the user
-    has not uploaded a separate CSV during this session. History is normalized once per
-    workbook content (sha256), not on every rerun.
+    An uploaded CSV backup is merged into this history (refresh_effective_status_history),
+    never used instead of it, so an older backup can't drop newer meetings. History is
+    normalized once per workbook content (sha256), not on every rerun.
     """
-    if st.session_state.get("uploaded_status_history") is not None:
-        return
-
     signature = f"embedded:{wb_sha}"
     if signature == st.session_state.get("embedded_status_history_signature", ""):
         return
 
     embedded = embedded_status_history(parsed)
     st.session_state.embedded_status_history_signature = signature
-
-    if embedded.empty:
-        store_status_history(empty_status_history(), "")
-        return
-
-    store_status_history(embedded, f"Embedded in {workbook_name}")
+    st.session_state["_embedded_history"] = embedded
+    st.session_state["_embedded_history_name"] = f"Embedded in {workbook_name}" if not embedded.empty else ""
+    refresh_effective_status_history()
 
 
 def write_status_history_sheet_to_workbook_bytes(file_bytes: bytes, history_df: pd.DataFrame) -> bytes:
@@ -4266,6 +4327,13 @@ def update_workbook_bytes(file_bytes: bytes, overrides: Dict[str, Dict[str, Any]
 def process_status_history_upload() -> None:
     uploaded_history = st.session_state.get("uploaded_status_history")
     if uploaded_history is None:
+        # The CSV was removed: go back to the workbook's own history.
+        if st.session_state.get("uploaded_status_history_signature"):
+            st.session_state.uploaded_status_history_signature = ""
+            st.session_state.status_history_load_error = ""
+            if st.session_state.get("_uploaded_history") is not None:
+                st.session_state["_uploaded_history"] = None
+                refresh_effective_status_history()
         return
 
     # Change detection by content (sha256): a corrected file with the same name and
@@ -4274,15 +4342,25 @@ def process_status_history_upload() -> None:
     signature = bytes_sha256(data)
     if signature == st.session_state.get("uploaded_status_history_signature", ""):
         return
+    st.session_state.uploaded_status_history_signature = signature
 
     try:
-        history = read_status_history_csv(io.BytesIO(data))
-        store_status_history(history, uploaded_history.name)
-        st.session_state.uploaded_status_history_signature = signature
-        LOG.info("event=history_upload sha=%s rows=%d", signature[:8], len(history))
-    except Exception as exc:
+        frame = history_upload_frame(data)
+    except ValueError as exc:
         st.session_state.status_history_load_error = str(exc)
+        LOG.warning("event=history_upload_rejected sha=%s", signature[:8])
+        return
+    except Exception as exc:
+        st.session_state.status_history_load_error = f"The file could not be read ({type(exc).__name__}); the current history was kept."
         LOG.warning("event=history_upload_failed sha=%s type=%s", signature[:8], type(exc).__name__)
+        return
+
+    st.session_state["_uploaded_history"] = frame
+    st.session_state["_uploaded_history_name"] = uploaded_history.name
+    used = refresh_effective_status_history()
+    kept = len(st.session_state.status_history) - used
+    notify(f"Status history CSV merged: {used:,} row(s) added or updated, {kept:,} kept.")
+    LOG.info("event=history_upload sha=%s rows=%d used=%d", signature[:8], len(frame), used)
 
 
 # -----------------------------------------------------------------------------
@@ -5744,65 +5822,6 @@ def render_review_view(ctx: AppContext) -> None:
     editor_key = f"review_editor::{st.session_state.review_editor_version}"
     row_keys = ctx.filtered["deal_key"].astype(str).tolist()
     st.data_editor(review_df, key=editor_key, width="stretch", hide_index=True, column_order=[c for c in REVIEW_COLUMN_ORDER if c != "Update Reminder" or st.session_state.get("show_update_reminders", False)], disabled=[column for column in REVIEW_COLUMN_ORDER if column not in REVIEW_EDITABLE_COLUMNS], on_change=commit_review_cb, args=(editor_key, row_keys), column_config={"AM Commentary": st.column_config.TextColumn("AM Commentary", width="large", max_chars=COMMENTARY_MAX_CHARS), "Status": st.column_config.TextColumn("Status", width="medium"), "Owner": st.column_config.TextColumn("Owner", width="medium")})
-
-def render_exports_view(
-    file_bytes: bytes,
-    workbook_name: str,
-    raw_deck: pd.DataFrame,
-    deck: pd.DataFrame,
-    as_of_date: dt.date,
-) -> None:
-    st.subheader("Exports")
-
-    updated_history = merge_status_history(
-        existing_history=st.session_state.status_history,
-        deck=deck,
-        meeting_date=as_of_date,
-        workbook_name=workbook_name,
-    )
-    update_bytes = export_overrides_csv(raw_deck, deck)
-    workbook_bytes = update_workbook_bytes(file_bytes, native_overrides())
-    workbook_bytes = write_status_history_sheet_to_workbook_bytes(workbook_bytes, updated_history)
-    agenda_bytes = build_agenda_dataframe(deck).to_csv(index=False).encode("utf-8")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.download_button(
-            "Download changed statuses/commentary CSV",
-            data=update_bytes,
-            file_name="weekly_portfolio_meeting_updates.csv",
-            mime="text/csv",
-            width="stretch",
-            disabled=(len(update_bytes) == 0),
-        )
-        st.download_button(
-            "Download agenda CSV",
-            data=agenda_bytes,
-            file_name="weekly_portfolio_agenda.csv",
-            mime="text/csv",
-            width="stretch",
-        )
-
-    with c2:
-        st.download_button(
-            "Download updated workbook with embedded history",
-            data=workbook_bytes,
-            file_name=f"updated_{workbook_name}",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
-        st.download_button(
-            "Download status history CSV backup",
-            data=status_history_to_csv_bytes(updated_history),
-            file_name="status_history_backup.csv",
-            mime="text/csv",
-            width="stretch",
-        )
-
-    st.info(
-        "The updated workbook includes the hidden _Status History sheet. Use that workbook or the "
-        "Jupyter weekly overview generator as the normal path; the CSV is only a backup/export."
-    )
 
 # -----------------------------------------------------------------------------
 # Workbook source and main app

@@ -173,7 +173,8 @@ def replace_hidden_sheets(file_bytes: bytes, frames: dict[str, pd.DataFrame]) ->
             if existing is not None:
                 path = paths[existing.get("name")]
                 existing.set("name", name)
-                existing.set("state", "hidden")
+                if existing.get("state") != "veryHidden":  # never make a veryHidden sheet more visible
+                    existing.set("state", "hidden")
             else:
                 seq = 1
                 while f"xl/worksheets/wpo{seq}.xml" in used_paths:
